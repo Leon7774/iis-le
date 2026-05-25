@@ -14,12 +14,12 @@
 #define R_IN  A0
 #define R_OUT A3  
 
-// SETTINGS
-#define THRESH 400  // Inverted: Black is < 400, White is > 400
-#define SPD 75      // Very slow straight speed to prevent oscillation
-#define T_SPD 120   // Very slow turning speed
+// SETTINGS (Restored from v1)
+#define THRESH 600  // Standard: Black is > 600, White is < 600
+#define SPD 110    
+#define T_SPD 180  
 #define LOOP_PENALTY 150 
-#define MIN_NODE_TIME 1200 // Increased time between nodes to prevent double-counting
+#define MIN_NODE_TIME 1000 // Minimum ms between nodes to prevent double-counting
 
 // MAP DATA
 #define MAX_NODES 50
@@ -37,6 +37,7 @@ int8_t prevN = -1;
 int8_t faceD = INITIAL_HEADING;
 unsigned long lastNodeTime = 0;
 int junctionDebounce = 0; // Counter to validate junction
+int whiteDebounce = 0;    // Counter to validate white marker
 bool foundFirstLine = false;
 
 // PATHFINDING STATE
@@ -104,7 +105,49 @@ bool findShortestPath(int8_t start, int8_t end) {
   return true;
 }
 
-void handleJunction() {
+void handleJunction(bool isWhiteMarker) {
+  if (isWhiteMarker) {
+    // 1. Arrived at next node on the path
+    pathIndex++;
+    curN = path[pathIndex];
+
+    // 2. Check if we reached the final destination node
+    if (curN == END_NODE || pathIndex >= pathLength - 1) {
+      drive(0, 0); // Stop motors
+      while(1);    // Halt
+    }
+
+    // 3. Find target direction to the next node in the path
+    int8_t nextN = path[pathIndex + 1];
+    int targetD = -1;
+    for (int d = 0; d < 8; d++) {
+      int nb = (int)pgm_read_word(&GRAPH[curN][d]);
+      if (nb == nextN) {
+        targetD = d;
+        break;
+      }
+    }
+
+    // Navigation error fallback (indicates node connection is missing in GRAPH)
+    if (targetD == -1) {
+      drive(0, 0);
+      pinMode(13, OUTPUT);
+      while (1) {
+        digitalWrite(13, HIGH); delay(100);
+        digitalWrite(13, LOW); delay(100);
+      }
+    }
+
+    // 4. Update state variables without executing mechanical turn (just follow curve)
+    prevN = path[pathIndex - 1];
+    faceD = targetD;
+    lastNodeTime = millis(); // Reset travel clock
+    whiteDebounce = 0;
+    junctionDebounce = 0;
+    return;
+  }
+
+  // STANDARD BLACK JUNCTION
   drive(0,0); delay(300); // Stop and settle
 
   // 1. Arrived at next node on the path
@@ -144,8 +187,8 @@ void handleJunction() {
     int turnDir = (diff > 4) ? -1 : 1;
     drive(T_SPD * turnDir, -T_SPD * turnDir);
     delay(300); // Clear current line
-    while(analogRead(MID) > THRESH); // Wait for white -> Inverted: wait for > 400
-    while(analogRead(MID) < THRESH); // Wait for next black line -> Inverted: wait for < 400
+    while(analogRead(MID) > THRESH); // Wait for white
+    while(analogRead(MID) < THRESH); // Wait for next black line
     drive(0,0); delay(100);
   }
 
@@ -154,6 +197,7 @@ void handleJunction() {
   faceD = targetD;
   lastNodeTime = millis(); // Reset travel clock
   junctionDebounce = 0;    // Reset debounce
+  whiteDebounce = 0;
 }
 
 void setup() {
@@ -169,35 +213,58 @@ void setup() {
       digitalWrite(13, LOW); delay(150);
     }
   }
+  
+  lastNodeTime = millis(); // Prevent false junction detection at startup
 }
 
 void loop() {
-  bool LO = analogRead(L_OUT) < THRESH;  // Inverted to '<'
-  bool LI = analogRead(L_IN)  < THRESH;  // Inverted to '<'
-  bool M  = analogRead(MID)   < THRESH;  // Inverted to '<'
-  bool RI = analogRead(R_IN)  < THRESH;  // Inverted to '<'
-  bool RO = analogRead(R_OUT) < THRESH;  // Inverted to '<'
+  bool LO = analogRead(L_OUT) > THRESH;
+  bool LI = analogRead(L_IN)  > THRESH;
+  bool M  = analogRead(MID)   > THRESH;
+  bool RI = analogRead(R_IN)  > THRESH;
+  bool RO = analogRead(R_OUT) > THRESH;
 
   if (!foundFirstLine) {
     if (LO || LI || M || RI || RO) foundFirstLine = true;
     else { drive(SPD, SPD); return; }
   }
 
-  // 1. JUNCTION DETECTION WITH DEBOUNCING
+  // Determine if the next node on our path is a white tape marker
+  int8_t nextN = (pathIndex < pathLength - 1) ? path[pathIndex + 1] : -1;
+  bool approachingWhiteNode = (nextN == 21 || nextN == 22 || nextN == 26 || nextN == 27);
+
+  if (approachingWhiteNode) {
+    // White Marker Detection (all sensors see white)
+    bool isWhiteMarker = (!LO && !LI && !M && !RI && !RO);
+    if (isWhiteMarker) {
+      if (millis() - lastNodeTime > MIN_NODE_TIME) {
+        whiteDebounce++;
+        if (whiteDebounce > 6) { // Must see white marker for 6 loops (~60ms)
+          handleJunction(true);
+        }
+      }
+    } else {
+      whiteDebounce = 0;
+    }
+  } else {
+    whiteDebounce = 0;
+  }
+
+  // 1. JUNCTION DETECTION WITH DEBOUNCING (Restored from v1)
   // We check if the outer sensors are hitting black
   if ((LO && RO) || (LO && LI && RI) || (RO && RI && LI)) {
     if (millis() - lastNodeTime > MIN_NODE_TIME) {
       junctionDebounce++;
-      if (junctionDebounce > 10) { // Must see junction for 10 loops (~100ms)
-        handleJunction();
+      if (junctionDebounce > 5) { // Must see junction for 5 loops (~50ms)
+        handleJunction(false);
       }
     }
   } else {
     junctionDebounce = 0; // Reset if we see white
   }
 
-  // 2. LINE FOLLOWING (Only if not in a junction)
-  if (junctionDebounce == 0) {
+  // 2. LINE FOLLOWING (Only if not in a junction and not on a white marker)
+  if (junctionDebounce == 0 && whiteDebounce == 0) {
     if (M) {
       if (LI && !RI)      drive(SPD * 0.4, SPD); 
       else if (RI && !LI) drive(SPD, SPD * 0.4); 

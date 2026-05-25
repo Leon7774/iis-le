@@ -64,7 +64,7 @@ else
         done
     else
         # No .ino files in root. Check if there are any in subdirectories that are valid sketches.
-        SUBOUT=$(find * -maxdepth 2 -name "*.ino" 2>/dev/null | grep -E "^([^/]+)/\1\.ino$" || true)
+        SUBOUT=$(find . -maxdepth 4 -name "*.ino" 2>/dev/null | sed 's|^\./||' | grep -E "(^|/)([^/]+)/\2\.ino$" || true)
         SUB_COUNT=$(echo "$SUBOUT" | grep -c "\.ino$" || true)
         if [ "$SUB_COUNT" -eq 1 ] && [ -n "$SUBOUT" ]; then
             SKETCH_FILE="$SUBOUT"
@@ -149,11 +149,32 @@ else
     echo -e "Auto-selected port: ${GREEN}$PORT${NC}"
 fi
 
-# 4. Set FQBN (Default to Arduino Nano)
-FQBN="arduino:avr:nano:cpu=atmega328"
-ALT_FQBN="arduino:avr:nano:cpu=atmega328old"
-
-echo -e "Selected Board: ${GREEN}Arduino Nano${NC}"
+# 4. Set FQBN (Auto-detect ESP32 vs Arduino Nano)
+if [[ "$SKETCH_FILE" == *esp* ]]; then
+    FQBN="esp32:esp32:nodemcu-32s"
+    ALT_FQBN=""
+    echo -e "Selected Board: ${GREEN}NodeMCU-32S${NC}"
+    
+    # Check if esp32 core is installed
+    if ! "$CLI_PATH" core list 2>/dev/null | grep -q "esp32:esp32"; then
+        echo -e "${YELLOW}⚠️ ESP32 core is not installed in arduino-cli.${NC}"
+        echo -e "Installing ESP32 core (this may take a minute)..."
+        
+        # Add Espressif package URL and install core
+        ESP32_URL="https://espressif.github.io/arduino-esp32/package_esp32_index.json"
+        if "$CLI_PATH" core update-index --additional-urls "$ESP32_URL" && \
+           "$CLI_PATH" core install esp32:esp32 --additional-urls "$ESP32_URL"; then
+            echo -e "${GREEN}✓ ESP32 core installed successfully!${NC}"
+        else
+            echo -e "${RED}✗ Failed to install ESP32 core. Please ensure you are connected to the internet.${NC}"
+            exit 1
+        fi
+    fi
+else
+    FQBN="arduino:avr:nano:cpu=atmega328"
+    ALT_FQBN="arduino:avr:nano:cpu=atmega328old"
+    echo -e "Selected Board: ${GREEN}Arduino Nano${NC}"
+fi
 
 # 5. Compile and Upload
 echo -e "\n${BLUE}Compiling the sketch...${NC}"
@@ -163,17 +184,18 @@ if ! "$CLI_PATH" compile --fqbn "$FQBN" "$SKETCH_PATH"; then
 fi
 
 echo -e "\n${BLUE}Uploading the sketch to $PORT...${NC}"
-if ! "$CLI_PATH" upload -p "$PORT" --fqbn "$FQBN" "$SKETCH_PATH"; then
-    echo -e "${YELLOW}⚠️ Upload failed with New Bootloader. Retrying with Old Bootloader...${NC}"
-    
-    # Re-compile and upload using the alternative FQBN
+if "$CLI_PATH" upload -p "$PORT" --fqbn "$FQBN" "$SKETCH_PATH"; then
+    echo -e "\n${GREEN}✓ Upload complete!${NC}"
+elif [ -n "$ALT_FQBN" ]; then
+    echo -e "${YELLOW}⚠️ Upload failed. Retrying with alternative board configuration (${ALT_FQBN})...${NC}"
     if "$CLI_PATH" compile --fqbn "$ALT_FQBN" "$SKETCH_PATH" && \
        "$CLI_PATH" upload -p "$PORT" --fqbn "$ALT_FQBN" "$SKETCH_PATH"; then
-        echo -e "\n${GREEN}✓ Upload complete using Arduino Nano (Old Bootloader)!${NC}"
+        echo -e "\n${GREEN}✓ Upload complete using alternative configuration!${NC}"
     else
-        echo -e "${RED}✗ Upload failed for both Nano bootloaders. Please check your connections!${NC}"
+        echo -e "${RED}✗ Upload failed. Please check your connections!${NC}"
         exit 1
     fi
 else
-    echo -e "\n${GREEN}✓ Upload complete!${NC}"
+    echo -e "${RED}✗ Upload failed. Please check your connections!${NC}"
+    exit 1
 fi

@@ -16,8 +16,8 @@
 
 // SETTINGS
 #define THRESH 600  // Standard: Black is > 600, White is < 600
-#define SPD 110    
-#define T_SPD 180  
+#define SPD 100    
+#define T_SPD 160  
 #define LOOP_PENALTY 150 
 #define MIN_NODE_TIME 1000 // Minimum ms between nodes to prevent double-counting
 
@@ -28,7 +28,7 @@ const int GRAPH[MAX_NODES][8] PROGMEM = {{0,0,0,0,0,0,0,0}, {0,0,2,0,7,0,0,0}, {
 
 // CONFIGURATION
 #define START_NODE 17
-#define END_NODE 23
+#define END_NODE 26
 #define INITIAL_HEADING 6
 
 // STATE
@@ -144,8 +144,8 @@ void handleJunction() {
     int turnDir = (diff > 4) ? -1 : 1;
     drive(T_SPD * turnDir, -T_SPD * turnDir);
     delay(300); // Clear current line
-    while(analogRead(MID) > THRESH); // Wait for white -> Inverted: wait for > 400
-    while(analogRead(MID) < THRESH); // Wait for next black line -> Inverted: wait for < 400
+    while(analogRead(MID) > THRESH); // Wait for white -> Standard: wait for > 600
+    while(analogRead(MID) < THRESH); // Wait for next black line -> Standard: wait for < 600
     drive(0,0); delay(100);
   }
 
@@ -172,12 +172,11 @@ void setup() {
 }
 
 void loop() {
-  bool LO = analogRead(L_OUT) > THRESH;
-  bool LI = analogRead(L_IN)  > THRESH;
-  bool M  = analogRead(MID)   > THRESH;
-  bool RI = analogRead(R_IN)  > THRESH;
-  bool RO = analogRead(R_OUT) > THRESH;
-
+  bool LO = analogRead(L_OUT) > THRESH;  // Restored to '>'
+  bool LI = analogRead(L_IN)  > THRESH;  // Restored to '>'
+  bool M  = analogRead(MID)   > THRESH;  // Restored to '>'
+  bool RI = analogRead(R_IN)  > THRESH;  // Restored to '>'
+  bool RO = analogRead(R_OUT) > THRESH;  // Restored to '>'
 
   if (!foundFirstLine) {
     if (LO || LI || M || RI || RO) foundFirstLine = true;
@@ -185,11 +184,14 @@ void loop() {
   }
 
   // 1. JUNCTION DETECTION WITH DEBOUNCING
-  // We check if the outer sensors are hitting black
-  if ((LO && RO) || (LO && LI && RI) || (RO && RI && LI)) {
+  // Count how many sensors see black
+  int blackSensors = (LO ? 1 : 0) + (LI ? 1 : 0) + (M ? 1 : 0) + (RI ? 1 : 0) + (RO ? 1 : 0);
+  
+  // A junction must trigger at least 3 sensors on black
+  if (blackSensors >= 3) {
     if (millis() - lastNodeTime > MIN_NODE_TIME) {
       junctionDebounce++;
-      if (junctionDebounce > 5) { // Must see junction for 5 loops (~50ms)
+      if (junctionDebounce > 8) { // Must see junction for 8 loops (~80ms)
         handleJunction();
       }
     }

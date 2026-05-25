@@ -15,11 +15,11 @@
 #define R_OUT A3  
 
 // SETTINGS
-#define THRESH 400  // Inverted: Black is < 400, White is > 400
-#define SPD 75      // Very slow straight speed to prevent oscillation
-#define T_SPD 120   // Very slow turning speed
+#define THRESH 600  // Standard: Black is > 600, White is < 600
+#define SPD 150    
+#define T_SPD 180  
 #define LOOP_PENALTY 150 
-#define MIN_NODE_TIME 1200 // Increased time between nodes to prevent double-counting
+#define MIN_NODE_TIME 1000 // Minimum ms between nodes to prevent double-counting
 
 // MAP DATA
 #define MAX_NODES 50
@@ -172,11 +172,12 @@ void setup() {
 }
 
 void loop() {
-  bool LO = analogRead(L_OUT) < THRESH;  // Inverted to '<'
-  bool LI = analogRead(L_IN)  < THRESH;  // Inverted to '<'
-  bool M  = analogRead(MID)   < THRESH;  // Inverted to '<'
-  bool RI = analogRead(R_IN)  < THRESH;  // Inverted to '<'
-  bool RO = analogRead(R_OUT) < THRESH;  // Inverted to '<'
+  bool LO = analogRead(L_OUT) > THRESH;
+  bool LI = analogRead(L_IN)  > THRESH;
+  bool M  = analogRead(MID)   > THRESH;
+  bool RI = analogRead(R_IN)  > THRESH;
+  bool RO = analogRead(R_OUT) > THRESH;
+
 
   if (!foundFirstLine) {
     if (LO || LI || M || RI || RO) foundFirstLine = true;
@@ -188,7 +189,7 @@ void loop() {
   if ((LO && RO) || (LO && LI && RI) || (RO && RI && LI)) {
     if (millis() - lastNodeTime > MIN_NODE_TIME) {
       junctionDebounce++;
-      if (junctionDebounce > 10) { // Must see junction for 10 loops (~100ms)
+      if (junctionDebounce > 5) { // Must see junction for 5 loops (~50ms)
         handleJunction();
       }
     }

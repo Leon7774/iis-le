@@ -25,8 +25,9 @@ if [ -z "$PORT" ]; then
     exit 1
 fi
 
-echo "Connecting to Serial Monitor on port: $PORT (9600 baud)..."
+BAUD="${1:-115200}"
+echo "Connecting to Serial Monitor on port: $PORT ($BAUD baud)..."
 echo "Press Ctrl+C to exit."
 echo "--------------------------------------------------"
 
-"$CLI_PATH" monitor -p "$PORT" -c baudrate=9600
+"$CLI_PATH" monitor -p "$PORT" -c baudrate="$BAUD"
