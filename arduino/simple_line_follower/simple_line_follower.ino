@@ -113,8 +113,8 @@ void loop() {
       set_motor_velocities(TURN_SPEED, -TURN_SPEED * 0.2);
     } 
     else {
-      // All white (lost the line): Move forward slowly to re-acquire
-      set_motor_velocities(BASE_SPEED * 0.5, BASE_SPEED * 0.5);
+      // All white (lost the line): Spin to search for the line
+      set_motor_velocities(TURN_SPEED, -TURN_SPEED);
     }
   }
   
