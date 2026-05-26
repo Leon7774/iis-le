@@ -7,7 +7,7 @@ constexpr uint8_t potPin = A0;
 constexpr uint8_t ldrPin = A1; 
 
 // --- CONFIGURATION CONSTANTS ---
-constexpr uint16_t DARKNESS_THRESHOLD = 500; 
+constexpr uint16_t DARKNESS_THRESHOLD = 200; 
 constexpr uint8_t DEBOUNCE_DELAY = 50;
 
 enum LightMode {
@@ -46,7 +46,7 @@ void loop() {
   uint16_t speedDelay = map(potValue, 0, 1023, 20, 400); 
 
   uint16_t ldrValue = analogRead(ldrPin);
-  bool isDark = (ldrValue > DARKNESS_THRESHOLD);
+  bool isDark = (ldrValue < DARKNESS_THRESHOLD);
 
   bool currentButtonState = digitalRead(buttonPin);
   
@@ -65,10 +65,10 @@ void loop() {
   // ---------------------------------------------------------
   unsigned long currentMillis = millis();
   
-  if (currentMillis - previousMillis >= speedDelay) {
-    previousMillis = currentMillis; 
-    
-    if (isDark) {
+  if (isDark) {
+    if (currentMillis - previousMillis >= speedDelay) {
+      previousMillis = currentMillis; 
+      
       switch (currentMode) {
         case MODE_OFF:
           clearAllLeds(); 
@@ -92,9 +92,9 @@ void loop() {
           patternAlternating();
           break;
       }
-    } else {
-      clearAllLeds();
     }
+  } else {
+    clearAllLeds();
   }
 }
 
