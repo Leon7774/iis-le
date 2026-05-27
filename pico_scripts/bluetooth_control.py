@@ -1,6 +1,6 @@
 # ============================================================
 # Raspberry Pi Pico W - Bluetooth & Line Tracing Control
-# Using control logic from taraktarak_nodes.py
+# Supporting Manual RC, Auto Line Follow, & BFS Node Nav
 # ============================================================
 
 import bluetooth
@@ -31,8 +31,8 @@ in4 = Pin(14, Pin.OUT)
 # ============================================================
 
 # OUTER DIGITAL SENSORS
-outer_left  = Pin(8, Pin.IN)
-outer_right = Pin(9, Pin.IN)
+outer_left  = Pin(9, Pin.IN)
+outer_right = Pin(8, Pin.IN)
 
 # CENTER ANALOG SENSORS
 left_sensor   = ADC(Pin(26))
@@ -57,14 +57,17 @@ adj = [
 ]
 
 # ============================================================
-# STATE VARIABLES & SPEED SETTINGS (from taraktarak_nodes.py)
+# STATE VARIABLES & SPEED SETTINGS
 # ============================================================
 
 current_speed = 80
-current_mode = "RC"  # Modes: "RC" or "LINE"
+current_mode = "RC"       # Modes: "RC", "LINE", or "NAV"
+line_paused = False       # Pauses movement in LINE/NAV modes
+last_sensor_send = 0      # Telemetry timer
 
-BASE_SPEED = 65
-TURN_SPEED = 75
+nav_start = 1             # Start node for pathfinder
+nav_end = 4               # Goal node for pathfinder
+nav_triggered = False     # Triggers path navigation sequence
 
 # ============================================================
 # BFS PATHFINDING
@@ -117,11 +120,11 @@ def stop():
 
 def read_sensors():
     return (
-        outer_left.value() == DIGITAL_BLACK,
+        outer_left.value() != DIGITAL_BLACK,
         left_sensor.read_u16() > ANALOG_THRESHOLD,
         middle_sensor.read_u16() > ANALOG_THRESHOLD,
         right_sensor.read_u16() > ANALOG_THRESHOLD,
-        outer_right.value() == DIGITAL_BLACK
+        outer_right.value() != DIGITAL_BLACK
     )
 
 def is_node(s):
@@ -141,12 +144,31 @@ def send_ble_log(msg):
         except Exception as e:
             print("Failed to notify log:", e)
 
+def send_sensors_if_time(s):
+    global last_sensor_send, conn_handle
+    if conn_handle is not None:
+        now = time.ticks_ms()
+        if time.ticks_diff(now, last_sensor_send) > 60:
+            sens_str = ",".join(["1" if x else "0" for x in s])
+            try:
+                ble.gatts_notify(conn_handle, tx_handle, f"SENS:{sens_str}\n".encode())
+            except:
+                pass
+            last_sensor_send = now
+
 # ============================================================
-# GRACEFUL ABORT AND NAVIGATION STEPS (from taraktarak_nodes.py)
+# GRACEFUL ABORT AND NAVIGATION STEPS
 # ============================================================
 
 def should_abort():
-    return current_mode != "LINE"
+    return current_mode not in ("LINE", "NAV")
+
+def check_pause():
+    while line_paused and not should_abort():
+        stop()
+        s = read_sensors()
+        send_sensors_if_time(s)
+        time.sleep_ms(20)
 
 def turn_to(current_heading, target_dir):
     if current_heading == target_dir:
@@ -160,23 +182,33 @@ def turn_to(current_heading, target_dir):
 
     send_ble_log(f"TURN: {DIR_NAMES[current_heading]} -> {DIR_NAMES[target_dir]}")
 
+    # Use turn speed relative to current speed setting
+    turn = min(100, current_speed + 10)
     if diff > 0:
         # RIGHT TURN
-        drive(TURN_SPEED, TURN_SPEED, False, True)
+        drive(turn, turn, False, True)
     else:
         # LEFT TURN
-        drive(TURN_SPEED, TURN_SPEED, True, False)
+        drive(turn, turn, True, False)
 
-    # Move off current line (300ms in 10ms intervals to remain responsive to aborts)
+    # Move off current line (300ms in 10ms intervals to remain responsive to aborts/pauses)
     for _ in range(30):
+        check_pause()
         if should_abort():
             stop()
             return current_heading
+        
+        s = read_sensors()
+        send_sensors_if_time(s)
         time.sleep_ms(10)
 
     # Find new line
     while not should_abort():
+        check_pause()
+        if should_abort():
+            break
         s = read_sensors()
+        send_sensors_if_time(s)
         m = s[2] # Middle sensor
         if m:
             break
@@ -186,44 +218,117 @@ def turn_to(current_heading, target_dir):
     return target_dir
 
 def travel_to_next_node():
+    last_line_time = time.ticks_ms()
     while not should_abort():
-        s = read_sensors()
-        if is_node(s):
-            stop()
-            send_ble_log("NODE DETECTED")
-            return True
+        check_pause()
+        if should_abort():
+            return False
 
-        # Simple Line Follower Logic
-        if s[1] and not s[3]:
-            drive(BASE_SPEED - 20, BASE_SPEED + 10) # Adjust Left
-        elif s[3] and not s[1]:
-            drive(BASE_SPEED + 10, BASE_SPEED - 20) # Adjust Right
+        s = read_sensors()
+        send_sensors_if_time(s)
+
+        if is_node(s):
+            if current_mode == "LINE":
+                send_ble_log("Node reached! Centering over node...")
+                
+                # Move forward slightly for 80ms to center wheels over the node
+                base = current_speed
+                drive(base, base, True, True)
+                for _ in range(8):
+                    check_pause()
+                    if should_abort():
+                        stop()
+                        return False
+                    
+                    s_mid = read_sensors()
+                    send_sensors_if_time(s_mid)
+                    time.sleep_ms(10)
+                
+                send_ble_log("Turning right...")
+                # Start turning right
+                rotate_speed = min(100, current_speed + 15)
+                drive(rotate_speed, rotate_speed, False, True)
+                
+                # Move off the node square (300ms in 10ms intervals)
+                for _ in range(30):
+                    check_pause()
+                    if should_abort():
+                        stop()
+                        return False
+                    
+                    s_rot = read_sensors()
+                    send_sensors_if_time(s_rot)
+                    time.sleep_ms(10)
+                
+                # Find the new line
+                while not should_abort():
+                    check_pause()
+                    if should_abort():
+                        break
+                    s_new = read_sensors()
+                    send_sensors_if_time(s_new)
+                    m = s_new[2]
+                    if m:
+                        break
+                    time.sleep_ms(5)
+                    
+                stop()
+                send_ble_log("Found new line! Resuming follow...")
+                last_line_time = time.ticks_ms()
+                continue
+            else:
+                # NAV mode: Stop and return success (the sequence loop will handle turning)
+                stop()
+                send_ble_log("Node reached!")
+                return True
+
+        left_black = s[1]
+        middle_black = s[2]
+        right_black = s[3]
+
+        # Dynamic speeds based on app settings (current_speed)
+        base = current_speed
+        rotate_speed = min(100, current_speed + 15)
+
+        # Update last seen line time if any center sensor sees black
+        if left_black or middle_black or right_black:
+            last_line_time = time.ticks_ms()
+
+        # Line Tracing Logic from taraktarak.py
+        if left_black and middle_black and right_black:
+            drive(base, base, True, True)       # Drive Forward
+        elif left_black:
+            drive(rotate_speed, rotate_speed, True, False)  # Rotate Left
+        elif right_black:
+            drive(rotate_speed, rotate_speed, False, True)  # Rotate Right
+        elif middle_black:
+            drive(base, base, True, True)       # Drive Forward
         else:
-            drive(BASE_SPEED, BASE_SPEED)           # Straight
+            # Only stop if we have been on white for more than 300ms
+            if time.ticks_diff(time.ticks_ms(), last_line_time) > 300:
+                stop()                              # No line, stop
+            else:
+                pass                                # Coast/keep last action
+
         time.sleep_ms(10)
     return False
 
-def run_navigation_sequence():
-    START_NODE = 1
-    END_NODE = 4
-    INITIAL_HEADING = 1 # Facing East (towards node 2)
-    curr_h = INITIAL_HEADING
-
-    send_ble_log("Calculating path Node 1 -> Node 4...")
-    path = bfs_path(START_NODE, END_NODE)
+def run_navigation_sequence(start_node, end_node):
+    send_ble_log(f"Calculating path Node {start_node} -> Node {end_node}...")
+    path = bfs_path(start_node, end_node)
     if not path:
         send_ble_log("Error: No path found!")
         return False
 
-    send_ble_log(f"Path: {path}")
+    send_ble_log(f"Path found: {path}")
+    curr_h = 1 # Facing East initially (towards Node 2)
 
-    # Executes navigation loop directly
     for step in path:
         if should_abort():
             return False
 
         from_n, direction, to_n = step
-        send_ble_log(f"Leg: Node {from_n} -> {to_n} ({DIR_NAMES[direction]})")
+        send_ble_log(f"Leg: Node {from_n} -> Node {to_n} ({DIR_NAMES[direction]})")
 
         curr_h = turn_to(curr_h, direction)
         if should_abort():
@@ -235,7 +340,7 @@ def run_navigation_sequence():
         curr_h = direction
 
     stop()
-    send_ble_log(f"SUCCESS: Arrived at Destination Node {END_NODE}!")
+    send_ble_log(f"SUCCESS: Arrived at Destination Node {end_node}!")
     return True
 
 # ============================================================
@@ -243,17 +348,43 @@ def run_navigation_sequence():
 # ============================================================
 
 def handle_command(cmd):
-    global current_speed, current_mode
+    global current_speed, current_mode, line_paused, nav_start, nav_end, nav_triggered
     cmd = cmd.strip().upper()
     print("CMD:", cmd)
 
     if cmd == "M:RC":
         current_mode = "RC"
+        line_paused = False
+        nav_triggered = False
         stop()
         send_ble_log("Mode switched: RC Control")
     elif cmd == "M:LINE":
         current_mode = "LINE"
+        line_paused = False
+        nav_triggered = False
         send_ble_log("Mode switched: Line Tracing")
+    elif cmd == "M:NAV":
+        current_mode = "NAV"
+        line_paused = False
+        nav_triggered = False
+        stop()
+        send_ble_log("Mode switched: BFS Nav (Standby)")
+    elif cmd == "M:PAUSE":
+        line_paused = True
+        stop()
+        send_ble_log("Line Tracing Paused")
+    elif cmd.startswith("NAV:"):
+        try:
+            parts = cmd.split(":")
+            nodes = parts[1].split(",")
+            nav_start = int(nodes[0])
+            nav_end = int(nodes[1])
+            current_mode = "NAV"
+            line_paused = False
+            nav_triggered = True
+            send_ble_log(f"BFS Nav Triggered: {nav_start} -> {nav_end}")
+        except Exception as e:
+            print("Error parsing NAV command:", e)
     elif current_mode == "RC":
         # RC Car Mode Drive Controls
         if cmd == "F":
@@ -275,7 +406,7 @@ def handle_command(cmd):
         elif cmd == "S":
             stop()
     
-    # Speed adjustment (available in both modes)
+    # Speed adjustment (available in all modes)
     if cmd == "+":
         current_speed = min(100, current_speed + 10)
         print(f"Speed: {current_speed}%")
@@ -326,7 +457,7 @@ def advertise():
 # ============================================================
 
 def ble_irq(event, data):
-    global conn_handle, current_speed, current_mode
+    global conn_handle, current_speed, current_mode, line_paused
 
     if event == 1:  # Connected
         conn_handle = data[0]
@@ -336,6 +467,7 @@ def ble_irq(event, data):
     elif event == 2:  # Disconnected
         conn_handle = None
         current_mode = "RC"
+        line_paused = False
         stop()
         print("Phone disconnected — re-advertising...")
         advertise()
@@ -348,12 +480,14 @@ def ble_irq(event, data):
             except Exception as e:
                 print("Error handling command:", e)
             
-            # Notify back the current speed and mode status
+            # Notify back the current speed, mode, and pause status
             if conn_handle is not None:
                 reply_spd = f"SPD:{current_speed}%\n".encode()
                 ble.gatts_notify(conn_handle, tx_handle, reply_spd)
                 reply_mode = f"MODE:{current_mode}\n".encode()
                 ble.gatts_notify(conn_handle, tx_handle, reply_mode)
+                reply_pause = f"PAUSE:{1 if line_paused else 0}\n".encode()
+                ble.gatts_notify(conn_handle, tx_handle, reply_pause)
 
 ble.irq(ble_irq)
 
@@ -365,31 +499,35 @@ advertise()
 
 try:
     last_mode = "RC"
-    last_sensor_send = 0
     while True:
-        # Send real-time sensor updates to client every 150ms if connected
-        if conn_handle is not None:
-            now = time.ticks_ms()
-            if time.ticks_diff(now, last_sensor_send) > 150:
-                s = read_sensors()
-                sens_str = ",".join(["1" if x else "0" for x in s])
-                try:
-                    ble.gatts_notify(conn_handle, tx_handle, f"SENS:{sens_str}\n".encode())
-                except:
-                    pass
-                last_sensor_send = now
+        # Send real-time sensor updates to client every 60ms if connected in RC mode
+        if conn_handle is not None and current_mode == "RC":
+            s = read_sensors()
+            send_sensors_if_time(s)
 
         if current_mode == "LINE":
             if last_mode == "RC":
                 last_mode = "LINE"
-                # Run the navigation sequence
-                run_navigation_sequence()
+                send_ble_log("Starting Line Tracing (Right Turn on Nodes)...")
+                travel_to_next_node()
                 # Automatically fall back to RC mode when finished or aborted
                 current_mode = "RC"
                 last_mode = "RC"
                 # Update client UI with the mode reversion
                 if conn_handle is not None:
                     ble.gatts_notify(conn_handle, tx_handle, b"MODE:RC\n")
+                    ble.gatts_notify(conn_handle, tx_handle, b"PAUSE:0\n")
+        elif current_mode == "NAV":
+            if last_mode != "NAV":
+                last_mode = "NAV"
+            if nav_triggered:
+                run_navigation_sequence(nav_start, nav_end)
+                nav_triggered = False
+                current_mode = "RC"
+                last_mode = "RC"
+                if conn_handle is not None:
+                    ble.gatts_notify(conn_handle, tx_handle, b"MODE:RC\n")
+                    ble.gatts_notify(conn_handle, tx_handle, b"PAUSE:0\n")
         else:
             last_mode = "RC"
             time.sleep_ms(50)

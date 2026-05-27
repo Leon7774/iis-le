@@ -20,6 +20,9 @@ class BleController extends ChangeNotifier {
   String currentSpeed = "80%";
   String activeMode = "RC";
   List<bool> sensorsState = [false, false, false, false, false];
+  bool isLinePaused = false;
+  int navStart = 1;
+  int navEnd = 4;
   List<String> consoleLogs = [];
 
   StreamSubscription? _scanSubscription;
@@ -162,6 +165,9 @@ class BleController extends ChangeNotifier {
             } else if (reply.startsWith("MODE:")) {
               activeMode = reply.replaceAll("MODE:", "").trim();
               notifyListeners();
+            } else if (reply.startsWith("PAUSE:")) {
+              isLinePaused = reply.replaceAll("PAUSE:", "").trim() == "1";
+              notifyListeners();
             }
           }
         });
@@ -187,6 +193,32 @@ class BleController extends ChangeNotifier {
       await sendCommand("M:RC");
     } else if (mode == "LINE") {
       await sendCommand("M:LINE");
+    } else if (mode == "NAV") {
+      await sendCommand("M:NAV");
+    }
+  }
+
+  Future<void> startBfsNav(int start, int end) async {
+    if (!isConnected) return;
+    navStart = start;
+    navEnd = end;
+    activeMode = "NAV";
+    isLinePaused = false;
+    notifyListeners();
+    await sendCommand("NAV:$start,$end");
+  }
+
+  Future<void> togglePause() async {
+    if (!isConnected) return;
+    logToConsole("App -> Pico: Toggling line pause state...");
+    if (isLinePaused) {
+      if (activeMode == "NAV") {
+        await sendCommand("NAV:$navStart,$navEnd"); // resume NAV
+      } else {
+        await sendCommand("M:LINE"); // resume LINE
+      }
+    } else {
+      await sendCommand("M:PAUSE"); // pause
     }
   }
 
@@ -222,6 +254,7 @@ class BleController extends ChangeNotifier {
     isConnected = false;
     isConnecting = false;
     activeMode = "RC";
+    isLinePaused = false;
     notifyListeners();
   }
 

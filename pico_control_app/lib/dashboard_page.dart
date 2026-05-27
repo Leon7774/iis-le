@@ -23,6 +23,11 @@ class _DashboardPageState extends State<DashboardPage> {
   // Active center view tab: "LOGS" or "SENSORS"
   String _activeTab = "LOGS";
 
+  // BFS Navigation node variables
+  int _startNode = 1;
+  int _endNode = 4;
+  bool _isNavigating = false;
+
   @override
   void initState() {
     super.initState();
@@ -44,6 +49,9 @@ class _DashboardPageState extends State<DashboardPage> {
         _isBwd = false;
         _isLeft = false;
         _isRight = false;
+      }
+      if (!_controller.isConnected || _controller.activeMode != "NAV") {
+        _isNavigating = false;
       }
       setState(() {});
     }
@@ -93,6 +101,44 @@ class _DashboardPageState extends State<DashboardPage> {
     }
 
     _controller.sendCommand(cmd);
+  }
+
+  // Calculates BFS Path locally for immediate UI preview
+  List<int> _calculateBfsPath(int start, int goal) {
+    final Map<int, List<int>> adjMap = {
+      1: [0, 2, 0, 0],
+      2: [0, 0, 3, 1],
+      3: [2, 0, 0, 4],
+      4: [0, 3, 0, 0],
+    };
+
+    if (start == goal) return [start];
+    final Map<int, int> parentMap = {};
+    final List<int> queue = [start];
+    final Set<int> visited = {start};
+
+    while (queue.isNotEmpty) {
+      final curr = queue.removeAt(0);
+      final neighbors = adjMap[curr] ?? [0, 0, 0, 0];
+      for (var neighbor in neighbors) {
+        if (neighbor != 0 && !visited.contains(neighbor)) {
+          visited.add(neighbor);
+          parentMap[neighbor] = curr;
+          if (neighbor == goal) {
+            final List<int> path = [];
+            var node = goal;
+            while (node != start) {
+              path.add(node);
+              node = parentMap[node]!;
+            }
+            path.add(start);
+            return path.reversed.toList();
+          }
+          queue.add(neighbor);
+        }
+      }
+    }
+    return [];
   }
 
   Widget _buildStatusHeader() {
@@ -215,7 +261,7 @@ class _DashboardPageState extends State<DashboardPage> {
           Expanded(
             child: _buildModeButton(
               mode: "RC",
-              label: "RC CAR CONTROL",
+              label: "RC CAR",
               isSelected: currentMode == "RC",
               enabled: isConnected,
             ),
@@ -223,8 +269,16 @@ class _DashboardPageState extends State<DashboardPage> {
           Expanded(
             child: _buildModeButton(
               mode: "LINE",
-              label: "LINE TRACING",
+              label: "LINE FOLLOW",
               isSelected: currentMode == "LINE",
+              enabled: isConnected,
+            ),
+          ),
+          Expanded(
+            child: _buildModeButton(
+              mode: "NAV",
+              label: "BFS NAV",
+              isSelected: currentMode == "NAV",
               enabled: isConnected,
             ),
           ),
@@ -239,7 +293,7 @@ class _DashboardPageState extends State<DashboardPage> {
     required bool isSelected,
     required bool enabled,
   }) {
-    Color activeColor = mode == "LINE" ? const Color(0xFFFFB300) : const Color(0xFF00E5FF);
+    Color activeColor = mode == "LINE" ? const Color(0xFFFFB300) : (mode == "NAV" ? const Color(0xFF9D4EDD) : const Color(0xFF00E5FF));
     return GestureDetector(
       onTap: enabled
           ? () {
@@ -265,7 +319,7 @@ class _DashboardPageState extends State<DashboardPage> {
                   ? activeColor
                   : (enabled ? Colors.white60 : Colors.white24),
               fontWeight: FontWeight.bold,
-              fontSize: 11.0,
+              fontSize: 10.0,
               letterSpacing: 0.8,
             ),
           ),
@@ -387,6 +441,109 @@ class _DashboardPageState extends State<DashboardPage> {
   }
 
   Widget _buildRightSteerControls() {
+    bool isLineMode = _controller.activeMode == "LINE";
+    bool isNavMode = _controller.activeMode == "NAV";
+    bool isConnected = _controller.isConnected;
+
+    if (isLineMode || (isNavMode && _isNavigating)) {
+      bool isPaused = _controller.isLinePaused;
+      Color activeColor = isPaused ? const Color(0xFFFFB300) : Colors.redAccent;
+      IconData icon = isPaused ? Icons.play_arrow : Icons.pause;
+      String text = isPaused ? "RESUME" : "PAUSE";
+
+      return GestureDetector(
+        onTap: isConnected ? () => _controller.togglePause() : null,
+        child: Container(
+          width: 180,
+          height: 152,
+          decoration: BoxDecoration(
+            color: isConnected ? activeColor.withOpacity(0.05) : Colors.white.withOpacity(0.01),
+            borderRadius: BorderRadius.circular(30.0),
+            border: Border.all(
+              color: isConnected ? activeColor.withOpacity(0.5) : Colors.white.withOpacity(0.05),
+              width: 1.5,
+            ),
+            boxShadow: isConnected
+                ? [
+                    BoxShadow(
+                      color: activeColor.withOpacity(0.05),
+                      blurRadius: 12,
+                      spreadRadius: 1,
+                    )
+                  ]
+                : [],
+          ),
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Icon(icon, color: activeColor, size: 48),
+              const SizedBox(height: 8.0),
+              Text(
+                text,
+                style: GoogleFonts.orbitron(
+                  color: activeColor,
+                  fontWeight: FontWeight.bold,
+                  fontSize: 14.0,
+                  letterSpacing: 1.5,
+                ),
+              ),
+            ],
+          ),
+        ),
+      );
+    }
+
+    if (isNavMode && !_isNavigating) {
+      Color activeColor = const Color(0xFF9D4EDD);
+      return GestureDetector(
+        onTap: isConnected
+            ? () {
+                setState(() {
+                  _isNavigating = true;
+                });
+                _controller.startBfsNav(_startNode, _endNode);
+              }
+            : null,
+        child: Container(
+          width: 180,
+          height: 152,
+          decoration: BoxDecoration(
+            color: isConnected ? activeColor.withOpacity(0.05) : Colors.white.withOpacity(0.01),
+            borderRadius: BorderRadius.circular(30.0),
+            border: Border.all(
+              color: isConnected ? activeColor.withOpacity(0.5) : Colors.white.withOpacity(0.05),
+              width: 1.5,
+            ),
+            boxShadow: isConnected
+                ? [
+                    BoxShadow(
+                      color: activeColor.withOpacity(0.05),
+                      blurRadius: 12,
+                      spreadRadius: 1,
+                    )
+                  ]
+                : [],
+          ),
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Icon(Icons.navigation, color: activeColor, size: 48),
+              const SizedBox(height: 8.0),
+              Text(
+                "START NAV",
+                style: GoogleFonts.orbitron(
+                  color: activeColor,
+                  fontWeight: FontWeight.bold,
+                  fontSize: 14.0,
+                  letterSpacing: 1.5,
+                ),
+              ),
+            ],
+          ),
+        ),
+      );
+    }
+
     bool enabled = _controller.isConnected && _controller.activeMode == "RC";
     return Container(
       width: 180,
@@ -489,6 +646,113 @@ class _DashboardPageState extends State<DashboardPage> {
           ),
         ),
       ),
+    );
+  }
+
+  Widget _buildPathFinderPanel() {
+    final path = _calculateBfsPath(_startNode, _endNode);
+    final pathText = path.isEmpty ? "No path found" : path.join(" ➔ ");
+
+    return Container(
+      margin: const EdgeInsets.symmetric(vertical: 4.0),
+      padding: const EdgeInsets.symmetric(vertical: 8.0, horizontal: 12.0),
+      decoration: BoxDecoration(
+        color: Colors.white.withOpacity(0.03),
+        borderRadius: BorderRadius.circular(16.0),
+        border: Border.all(color: Colors.white.withOpacity(0.05)),
+      ),
+      child: Column(
+        children: [
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+            children: [
+              _buildNodeDropdown("START NODE", _startNode, (val) {
+                if (val != null) {
+                  setState(() {
+                    _startNode = val;
+                  });
+                }
+              }),
+              _buildNodeDropdown("GOAL NODE", _endNode, (val) {
+                if (val != null) {
+                  setState(() {
+                    _endNode = val;
+                  });
+                }
+              }),
+            ],
+          ),
+          const SizedBox(height: 6.0),
+          Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Text(
+                "PATH PREVIEW: ",
+                style: GoogleFonts.outfit(
+                  color: Colors.white54,
+                  fontSize: 10.0,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+              Text(
+                pathText,
+                style: GoogleFonts.orbitron(
+                  color: const Color(0xFF9D4EDD),
+                  fontSize: 13.0,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildNodeDropdown(String label, int currentValue, ValueChanged<int?> onChanged) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          label,
+          style: GoogleFonts.outfit(
+            color: Colors.white38,
+            fontSize: 9.0,
+            fontWeight: FontWeight.bold,
+          ),
+        ),
+        const SizedBox(height: 2.0),
+        Container(
+          height: 32,
+          padding: const EdgeInsets.symmetric(horizontal: 8.0),
+          decoration: BoxDecoration(
+            color: Colors.white.withOpacity(0.04),
+            borderRadius: BorderRadius.circular(8.0),
+            border: Border.all(color: Colors.white.withOpacity(0.1)),
+          ),
+          child: DropdownButtonHideUnderline(
+            child: DropdownButton<int>(
+              value: currentValue,
+              items: [1, 2, 3, 4]
+                  .map((e) => DropdownMenuItem<int>(
+                        value: e,
+                        child: Text(
+                          "Node $e",
+                          style: GoogleFonts.orbitron(
+                            color: Colors.white,
+                            fontSize: 11.0,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                      ))
+                  .toList(),
+              onChanged: onChanged,
+              dropdownColor: const Color(0xFF1E1E24),
+              icon: const Icon(Icons.arrow_drop_down, color: Colors.white54),
+            ),
+          ),
+        ),
+      ],
     );
   }
 
@@ -778,6 +1042,7 @@ class _DashboardPageState extends State<DashboardPage> {
                     _buildStatusHeader(),
                     _buildModeSelector(),
                     _buildSpeedPanel(),
+                    if (_controller.activeMode == "NAV") _buildPathFinderPanel(),
                     _buildTabSelector(),
                     Expanded(
                       child: _activeTab == "LOGS"
