@@ -18,6 +18,8 @@ class BleController extends ChangeNotifier {
   bool isConnected = false;
 
   String currentSpeed = "80%";
+  String activeMode = "RC";
+  List<bool> sensorsState = [false, false, false, false, false];
   List<String> consoleLogs = [];
 
   StreamSubscription? _scanSubscription;
@@ -145,10 +147,22 @@ class BleController extends ChangeNotifier {
         _txSubscription?.cancel();
         _txSubscription = txCharacteristic!.lastValueStream.listen((value) {
           final reply = utf8.decode(value);
-          logToConsole("Pico -> App: ${reply.trim()}");
-          if (reply.startsWith("SPD:")) {
-            currentSpeed = reply.replaceAll("SPD:", "").trim();
-            notifyListeners();
+          if (reply.startsWith("SENS:")) {
+            final data = reply.replaceAll("SENS:", "").trim();
+            final parts = data.split(",");
+            if (parts.length == 5) {
+              sensorsState = parts.map((p) => p == "1").toList();
+              notifyListeners();
+            }
+          } else {
+            logToConsole("Pico -> App: ${reply.trim()}");
+            if (reply.startsWith("SPD:")) {
+              currentSpeed = reply.replaceAll("SPD:", "").trim();
+              notifyListeners();
+            } else if (reply.startsWith("MODE:")) {
+              activeMode = reply.replaceAll("MODE:", "").trim();
+              notifyListeners();
+            }
           }
         });
         logToConsole("BLE communication initialized successfully!");
@@ -160,6 +174,19 @@ class BleController extends ChangeNotifier {
     } catch (e) {
       logToConsole("Connection failed: $e");
       disconnect();
+    }
+  }
+
+  Future<void> setMode(String mode) async {
+    if (!isConnected) {
+      logToConsole("Cannot change mode: Device not connected.");
+      return;
+    }
+    logToConsole("App -> Pico: Requesting mode $mode");
+    if (mode == "RC") {
+      await sendCommand("M:RC");
+    } else if (mode == "LINE") {
+      await sendCommand("M:LINE");
     }
   }
 
@@ -194,6 +221,7 @@ class BleController extends ChangeNotifier {
     txCharacteristic = null;
     isConnected = false;
     isConnecting = false;
+    activeMode = "RC";
     notifyListeners();
   }
 

@@ -5,9 +5,10 @@ import 'dashboard_page.dart';
 
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
-  // Lock orientation to portrait
+  // Lock orientation to landscape
   SystemChrome.setPreferredOrientations([
-    DeviceOrientation.portraitUp,
+    DeviceOrientation.landscapeLeft,
+    DeviceOrientation.landscapeRight,
   ]);
   // Use light status bar on dark background
   SystemChrome.setSystemUIOverlayStyle(const SystemUiOverlayStyle(
