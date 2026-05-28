@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'ble_controller.dart';
 
@@ -13,6 +14,7 @@ class DashboardPage extends StatefulWidget {
 
 class _DashboardPageState extends State<DashboardPage> {
   late BleController _controller;
+  final FocusNode _focusNode = FocusNode();
 
   // RC Control holding states for smooth multi-touch control
   bool _isFwd = false;
@@ -36,11 +38,17 @@ class _DashboardPageState extends State<DashboardPage> {
     super.initState();
     _controller = widget.controller;
     _controller.addListener(_onControllerUpdate);
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted && _focusNode.canRequestFocus) {
+        _focusNode.requestFocus();
+      }
+    });
   }
 
   @override
   void dispose() {
     _controller.removeListener(_onControllerUpdate);
+    _focusNode.dispose();
     super.dispose();
   }
 
@@ -78,6 +86,12 @@ class _DashboardPageState extends State<DashboardPage> {
           _activeTab = "MAP";
         } else if (mode == "LINE") {
           _activeTab = "SENSORS";
+        } else if (mode == "RC") {
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            if (mounted && _focusNode.canRequestFocus) {
+              _focusNode.requestFocus();
+            }
+          });
         }
         _lastMode = mode;
       }
@@ -183,6 +197,43 @@ class _DashboardPageState extends State<DashboardPage> {
     }
 
     _controller.sendCommand(cmd);
+  }
+
+  void _handleKeyEvent(KeyEvent event) {
+    if (!_controller.isConnected || _controller.activeMode != "RC") {
+      return;
+    }
+
+    final key = event.logicalKey;
+    final isDown = event is KeyDownEvent || event is KeyRepeatEvent;
+
+    bool changed = false;
+    if (key == LogicalKeyboardKey.keyW || key == LogicalKeyboardKey.arrowUp) {
+      if (_isFwd != isDown) {
+        _isFwd = isDown;
+        changed = true;
+      }
+    } else if (key == LogicalKeyboardKey.keyS || key == LogicalKeyboardKey.arrowDown) {
+      if (_isBwd != isDown) {
+        _isBwd = isDown;
+        changed = true;
+      }
+    } else if (key == LogicalKeyboardKey.keyA || key == LogicalKeyboardKey.arrowLeft) {
+      if (_isLeft != isDown) {
+        _isLeft = isDown;
+        changed = true;
+      }
+    } else if (key == LogicalKeyboardKey.keyD || key == LogicalKeyboardKey.arrowRight) {
+      if (_isRight != isDown) {
+        _isRight = isDown;
+        changed = true;
+      }
+    }
+
+    if (changed) {
+      setState(() {});
+      _updateRCControls();
+    }
   }
 
   static const Map<int, List<int>> adjMap = {
@@ -715,6 +766,12 @@ class _DashboardPageState extends State<DashboardPage> {
     required Color color,
     required bool enabled,
   }) {
+    bool isActive = false;
+    if (directionKey == "F") isActive = _isFwd;
+    if (directionKey == "B") isActive = _isBwd;
+    if (directionKey == "L") isActive = _isLeft;
+    if (directionKey == "R") isActive = _isRight;
+
     return GestureDetector(
       onTapDown: (_) {
         if (!enabled) return;
@@ -750,18 +807,22 @@ class _DashboardPageState extends State<DashboardPage> {
         width: 64,
         height: 64,
         decoration: BoxDecoration(
-          color: enabled ? color.withOpacity(0.05) : Colors.white.withOpacity(0.01),
+          color: enabled
+              ? (isActive ? color.withOpacity(0.2) : color.withOpacity(0.05))
+              : Colors.white.withOpacity(0.01),
           borderRadius: BorderRadius.circular(20.0),
           border: Border.all(
-            color: enabled ? color.withOpacity(0.4) : Colors.white.withOpacity(0.04),
+            color: enabled
+                ? (isActive ? color : color.withOpacity(0.4))
+                : Colors.white.withOpacity(0.04),
             width: 1.5,
           ),
           boxShadow: enabled
               ? [
                   BoxShadow(
-                    color: color.withOpacity(0.03),
-                    blurRadius: 8,
-                    spreadRadius: 1,
+                    color: isActive ? color.withOpacity(0.2) : color.withOpacity(0.03),
+                    blurRadius: isActive ? 12 : 8,
+                    spreadRadius: isActive ? 2 : 1,
                   )
                 ]
               : [],
@@ -769,7 +830,9 @@ class _DashboardPageState extends State<DashboardPage> {
         child: Center(
           child: Icon(
             icon,
-            color: enabled ? color : Colors.white12,
+            color: enabled
+                ? (isActive ? Colors.white : color)
+                : Colors.white12,
             size: 36,
           ),
         ),
@@ -889,6 +952,23 @@ class _DashboardPageState extends State<DashboardPage> {
                       fontWeight: FontWeight.bold,
                     ),
                   ),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 6.0),
+          Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              const Icon(Icons.info_outline, color: Color(0xFF00E5FF), size: 12),
+              const SizedBox(width: 6.0),
+              Text(
+                "PLACE ROBOT AT NODE $_startNode FACING EAST (RIGHT ➔ ON MAP)",
+                style: GoogleFonts.orbitron(
+                  color: const Color(0xFF00E5FF),
+                  fontSize: 8.5,
+                  fontWeight: FontWeight.bold,
+                  letterSpacing: 0.5,
                 ),
               ),
             ],
@@ -1183,75 +1263,88 @@ class _DashboardPageState extends State<DashboardPage> {
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      backgroundColor: const Color(0xFF0C0C0E),
-      appBar: AppBar(
-        toolbarHeight: 36.0,
-        title: Text(
-          "PICO MOTOR CONTROL",
-          style: GoogleFonts.orbitron(
-            color: Colors.white,
-            fontWeight: FontWeight.bold,
-            fontSize: 12.0,
-            letterSpacing: 1.2,
-          ),
-        ),
-        centerTitle: true,
-        backgroundColor: Colors.transparent,
-        elevation: 0,
-        actions: [
-          if (_controller.isScanning)
-            const Padding(
-              padding: EdgeInsets.only(right: 16.0),
-              child: Center(
-                child: SizedBox(
-                  width: 16.0,
-                  height: 16.0,
-                  child: CircularProgressIndicator(
-                    strokeWidth: 1.5,
-                    valueColor: AlwaysStoppedAnimation<Color>(Color(0xFF00E5FF)),
-                  ),
-                ),
+    return KeyboardListener(
+      focusNode: _focusNode,
+      autofocus: true,
+      onKeyEvent: _handleKeyEvent,
+      child: GestureDetector(
+        behavior: HitTestBehavior.translucent,
+        onTap: () {
+          if (mounted && _focusNode.canRequestFocus) {
+            _focusNode.requestFocus();
+          }
+        },
+        child: Scaffold(
+          backgroundColor: const Color(0xFF0C0C0E),
+          appBar: AppBar(
+            toolbarHeight: 36.0,
+            title: Text(
+              "PICO MOTOR CONTROL",
+              style: GoogleFonts.orbitron(
+                color: Colors.white,
+                fontWeight: FontWeight.bold,
+                fontSize: 12.0,
+                letterSpacing: 1.2,
               ),
             ),
-        ],
-      ),
-      body: SafeArea(
-        child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 8.0),
-          child: Row(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              // Left control panel (Forward/Backward)
-              Center(
-                child: _buildLeftDriveControls(),
-              ),
-              const SizedBox(width: 16.0),
-              // Center panel (Status, Mode selector, Speed panel, Tabs, Log/Sensor View)
-              Expanded(
-                child: Column(
-                  children: [
-                    _buildStatusHeader(),
-                    _buildModeSelector(),
-                    _buildSpeedPanel(),
-                    if (_controller.activeMode == "NAV" || _activeTab == "MAP") _buildPathFinderPanel(),
-                    _buildTabSelector(),
-                    Expanded(
-                      child: _activeTab == "MAP"
-                          ? _buildMapPanel()
-                          : (_activeTab == "LOGS"
-                              ? _buildConsolePanel()
-                              : _buildSensorPanel()),
+            centerTitle: true,
+            backgroundColor: Colors.transparent,
+            elevation: 0,
+            actions: [
+              if (_controller.isScanning)
+                const Padding(
+                  padding: EdgeInsets.only(right: 16.0),
+                  child: Center(
+                    child: SizedBox(
+                      width: 16.0,
+                      height: 16.0,
+                      child: CircularProgressIndicator(
+                        strokeWidth: 1.5,
+                        valueColor: AlwaysStoppedAnimation<Color>(Color(0xFF00E5FF)),
+                      ),
                     ),
-                  ],
+                  ),
                 ),
-              ),
-              const SizedBox(width: 16.0),
-              // Right control panel (Left/Right)
-              Center(
-                child: _buildRightSteerControls(),
-              ),
             ],
+          ),
+          body: SafeArea(
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 8.0),
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  // Left control panel (Forward/Backward)
+                  Center(
+                    child: _buildLeftDriveControls(),
+                  ),
+                  const SizedBox(width: 16.0),
+                  // Center panel (Status, Mode selector, Speed panel, Tabs, Log/Sensor View)
+                  Expanded(
+                    child: Column(
+                      children: [
+                        _buildStatusHeader(),
+                        _buildModeSelector(),
+                        _buildSpeedPanel(),
+                        if (_controller.activeMode == "NAV" || _activeTab == "MAP") _buildPathFinderPanel(),
+                        _buildTabSelector(),
+                        Expanded(
+                          child: _activeTab == "MAP"
+                              ? _buildMapPanel()
+                              : (_activeTab == "LOGS"
+                                  ? _buildConsolePanel()
+                                  : _buildSensorPanel()),
+                        ),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(width: 16.0),
+                  // Right control panel (Left/Right)
+                  Center(
+                    child: _buildRightSteerControls(),
+                  ),
+                ],
+              ),
+            ),
           ),
         ),
       ),
@@ -1505,6 +1598,38 @@ class NodeMapPainter extends CustomPainter {
         canvas,
         Offset(center.dx - textPainter.width / 2, center.dy - textPainter.height / 2),
       );
+
+      if (id == startNode) {
+        // Draw initial heading indicator (pointing East / Right)
+        final arrowPaint = Paint()
+          ..color = const Color(0xFF00E5FF)
+          ..style = PaintingStyle.fill;
+        
+        final path = Path();
+        double startX = center.dx + nodeRadius + 5;
+        double startY = center.dy;
+        
+        path.moveTo(startX, startY - 6); // Top point
+        path.lineTo(startX + 10, startY); // Tip pointing right (East)
+        path.lineTo(startX, startY + 6); // Bottom point
+        path.close();
+        canvas.drawPath(path, arrowPaint);
+
+        // Draw a subtle "E" text above the arrow
+        final textPainter = TextPainter(
+          text: const TextSpan(
+            text: "E",
+            style: TextStyle(
+              color: Color(0xFF00E5FF),
+              fontSize: 9.0,
+              fontWeight: FontWeight.bold,
+            ),
+          ),
+          textDirection: TextDirection.ltr,
+        );
+        textPainter.layout();
+        textPainter.paint(canvas, Offset(startX + 2, startY - 16));
+      }
     });
   }
 

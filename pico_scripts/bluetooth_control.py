@@ -225,7 +225,7 @@ def turn_to(current_heading, target_dir):
 
     direction_coefficient = -1 if rotation_delta > 4 else 1
 
-    send_ble_log(f"TURN: {DIR_NAMES[current_heading]} -> {DIR_NAMES[target_dir]} (rot: {rotation_delta})")
+    send_ble_log(f"TURN: {DIR_NAMES[current_heading]} -> {DIR_NAMES[target_dir]} (rot: {rotation_delta}, dir_coeff: {direction_coefficient})")
 
     # Use turn speed relative to current speed setting
     turn = min(100, current_speed + 15)
@@ -237,6 +237,7 @@ def turn_to(current_heading, target_dir):
         drive(turn, turn, True, False)
 
     # Move off current line (300ms in 10ms intervals to remain responsive to aborts/pauses)
+    send_ble_log("Executing blind rotation to clear current node...")
     for _ in range(30):
         check_pause()
         if should_abort():
@@ -247,6 +248,7 @@ def turn_to(current_heading, target_dir):
         send_sensors_if_time(s)
         time.sleep_ms(10)
 
+    send_ble_log("Blind rotation done. Scanning for line...")
     # Find new line
     while not should_abort():
         check_pause()
@@ -260,11 +262,16 @@ def turn_to(current_heading, target_dir):
         time.sleep_ms(5)
 
     stop()
+    send_ble_log("Line aligned. Rotation complete.")
     return target_dir
 
 def travel_to_next_node():
     global last_node_time
     last_line_time = time.ticks_ms()
+    send_ble_log(f"Starting leg travel (Debounce active: last_node_time={last_node_time})")
+    
+    last_ignore_log = 0
+
     while not should_abort():
         check_pause()
         if should_abort():
@@ -275,7 +282,8 @@ def travel_to_next_node():
 
         if is_node(s):
             now = time.ticks_ms()
-            if time.ticks_diff(now, last_node_time) > 600:
+            diff = time.ticks_diff(now, last_node_time)
+            if diff > 600:
                 last_node_time = now
                 if current_mode == "LINE":
                     send_ble_log("Node reached! Centering over node...")
@@ -328,8 +336,12 @@ def travel_to_next_node():
                 else:
                     # NAV mode: Stop and return success (the sequence loop will handle turning)
                     stop()
-                    send_ble_log("Node reached!")
+                    send_ble_log(f"Node reached successfully! (diff: {diff}ms)")
                     return True
+            else:
+                if time.ticks_diff(now, last_ignore_log) > 200:
+                    last_ignore_log = now
+                    print(f"[NAV DEBUG] Node detected but ignored (debounce diff: {diff}ms <= 600ms)")
 
         left_black = s[1]
         middle_black = s[2]
@@ -363,6 +375,9 @@ def travel_to_next_node():
     return False
 
 def run_navigation_sequence(start_node, end_node, path_type):
+    global last_node_time
+    last_node_time = time.ticks_ms()
+    
     send_ble_log(f"Calculating path Node {start_node} -> Node {end_node} via {path_type}...")
     if path_type == "DFS":
         path = dfs_path(start_node, end_node)
@@ -376,18 +391,25 @@ def run_navigation_sequence(start_node, end_node, path_type):
     send_ble_log(f"Path found: {path}")
     curr_h = 2 # Facing East initially (towards Node 2 in 8-direction system)
 
-    for step in path:
+    for idx, step in enumerate(path):
         if should_abort():
+            send_ble_log("Navigation aborted by user.")
             return False
 
         from_n, direction, to_n = step
-        send_ble_log(f"Leg: Node {from_n} -> Node {to_n} ({DIR_NAMES[direction]})")
+        send_ble_log(f"Leg [{idx + 1}/{len(path)}]: Node {from_n} -> Node {to_n} ({DIR_NAMES[direction]})")
 
         curr_h = turn_to(curr_h, direction)
         if should_abort():
+            send_ble_log("Navigation aborted by user during turn.")
             return False
 
+        # Reset the debounce timestamp AFTER the turn is completed.
+        last_node_time = time.ticks_ms()
+        send_ble_log(f"Turn done. Debounce reset to {last_node_time}. Moving to next node...")
+
         if not travel_to_next_node():
+            send_ble_log("Travel failed or lost line.")
             return False
         
         curr_h = direction
@@ -397,6 +419,7 @@ def run_navigation_sequence(start_node, end_node, path_type):
         if conn_handle is not None:
             try:
                 ble.gatts_notify(conn_handle, tx_handle, f"REACHED:{to_n}\n".encode())
+                send_ble_log(f"App notified: REACHED Node {to_n}")
             except Exception as e:
                 print("Failed to notify reached node:", e)
 
