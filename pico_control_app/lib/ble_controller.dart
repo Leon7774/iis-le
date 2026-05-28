@@ -18,6 +18,7 @@ class BleController extends ChangeNotifier {
   bool isConnected = false;
 
   String currentSpeed = "80%";
+  String turnSpeed = "85%";
   String activeMode = "RC";
   List<bool> sensorsState = [false, false, false, false, false];
   bool isLinePaused = false;
@@ -164,6 +165,9 @@ class BleController extends ChangeNotifier {
             if (reply.startsWith("SPD:")) {
               currentSpeed = reply.replaceAll("SPD:", "").trim();
               notifyListeners();
+            } else if (reply.startsWith("TSPD:")) {
+              turnSpeed = reply.replaceAll("TSPD:", "").trim();
+              notifyListeners();
             } else if (reply.startsWith("MODE:")) {
               activeMode = reply.replaceAll("MODE:", "").trim();
               notifyListeners();
@@ -207,6 +211,11 @@ class BleController extends ChangeNotifier {
     } else if (mode == "NAV") {
       await sendCommand("M:NAV");
     }
+  }
+
+  Future<void> setTurnSpeed(int speed) async {
+    if (!isConnected) return;
+    await sendCommand("T:$speed");
   }
 
   Future<void> startNav(int start, int end, String alg) async {
@@ -273,6 +282,8 @@ class BleController extends ChangeNotifier {
     activeMode = "RC";
     isLinePaused = false;
     passedNodes = [];
+    currentSpeed = "80%";
+    turnSpeed = "85%";
     notifyListeners();
   }
 

@@ -78,6 +78,7 @@ adj = [
 # ============================================================
 
 current_speed = 80
+turn_speed = 85
 current_mode = "RC"       # Modes: "RC", "LINE", or "NAV"
 line_paused = False       # Pauses movement in LINE/NAV modes
 last_sensor_send = 0      # Telemetry timer
@@ -214,6 +215,7 @@ def check_pause():
         time.sleep_ms(20)
 
 def turn_to(current_heading, target_dir):
+    global turn_speed
     if current_heading == target_dir:
         send_ble_log("Already aligned.")
         return target_dir
@@ -227,8 +229,8 @@ def turn_to(current_heading, target_dir):
 
     send_ble_log(f"TURN: {DIR_NAMES[current_heading]} -> {DIR_NAMES[target_dir]} (rot: {rotation_delta}, dir_coeff: {direction_coefficient})")
 
-    # Use turn speed relative to current speed setting
-    turn = min(100, current_speed + 15)
+    # Use independent turn speed
+    turn = turn_speed
     if direction_coefficient > 0:
         # RIGHT TURN
         drive(turn, turn, False, True)
@@ -389,7 +391,14 @@ def run_navigation_sequence(start_node, end_node, path_type):
         return False
 
     send_ble_log(f"Path found: {path}")
-    curr_h = 2 # Facing East initially (towards Node 2 in 8-direction system)
+    
+    # --- CHANGED LOGIC HERE ---
+    # Instead of hardcoding East (2), we assume the user placed the robot
+    # facing the correct direction for the first step based on our app UI.
+    # path[0] looks like (from_node, direction, to_node)
+    curr_h = path[0][1] 
+    send_ble_log(f"Initial physical placement assumed to be: {DIR_NAMES[curr_h]}")
+    # --------------------------
 
     for idx, step in enumerate(path):
         if should_abort():
@@ -432,7 +441,7 @@ def run_navigation_sequence(start_node, end_node, path_type):
 # ============================================================
 
 def handle_command(cmd):
-    global current_speed, current_mode, line_paused, nav_start, nav_end, nav_triggered, nav_path_type
+    global current_speed, current_mode, line_paused, nav_start, nav_end, nav_triggered, nav_path_type, turn_speed
     cmd = cmd.strip().upper()
     print("CMD:", cmd)
 
@@ -457,6 +466,12 @@ def handle_command(cmd):
         line_paused = True
         stop()
         send_ble_log("Line Tracing Paused")
+    elif cmd.startswith("T:"):
+        try:
+            turn_speed = int(cmd.split(":")[1])
+            send_ble_log(f"Turn speed set to {turn_speed}%")
+        except Exception as e:
+            print("Error parsing Turn Speed:", e)
     elif cmd.startswith("NAV:"):
         try:
             parts = cmd.split(":")
@@ -544,7 +559,7 @@ def advertise():
 # ============================================================
 
 def ble_irq(event, data):
-    global conn_handle, current_speed, current_mode, line_paused
+    global conn_handle, current_speed, current_mode, line_paused, turn_speed
 
     if event == 1:  # Connected
         conn_handle = data[0]
@@ -575,6 +590,8 @@ def ble_irq(event, data):
                 ble.gatts_notify(conn_handle, tx_handle, reply_mode)
                 reply_pause = f"PAUSE:{1 if line_paused else 0}\n".encode()
                 ble.gatts_notify(conn_handle, tx_handle, reply_pause)
+                reply_turn = f"TSPD:{turn_speed}%\n".encode()
+                ble.gatts_notify(conn_handle, tx_handle, reply_turn)
 
 ble.irq(ble_irq)
 

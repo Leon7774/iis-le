@@ -507,7 +507,7 @@ class _DashboardPageState extends State<DashboardPage> {
 
   Widget _buildSpeedPanel() {
     return Container(
-      padding: const EdgeInsets.symmetric(vertical: 6.0, horizontal: 16.0),
+      padding: const EdgeInsets.symmetric(vertical: 8.0, horizontal: 16.0),
       decoration: BoxDecoration(
         color: Colors.white.withOpacity(0.03),
         borderRadius: BorderRadius.circular(20.0),
@@ -515,43 +515,66 @@ class _DashboardPageState extends State<DashboardPage> {
           color: Colors.white.withOpacity(0.08),
         ),
       ),
-      child: Row(
-        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+      child: Column(
         children: [
-          Row(
-            children: [
-              Text(
-                "SPEED: ",
-                style: GoogleFonts.outfit(
-                  color: Colors.white54,
-                  fontSize: 11.0,
-                  fontWeight: FontWeight.w600,
-                  letterSpacing: 1.2,
-                ),
-              ),
-              Text(
-                _controller.currentSpeed,
-                style: GoogleFonts.orbitron(
-                  color: const Color(0xFFFFB300),
-                  fontSize: 20.0,
-                  fontWeight: FontWeight.bold,
-                ),
-              ),
-            ],
+          _buildSpeedRow("TRACE SPEED", _controller.currentSpeed, () {
+            _controller.sendCommand("-");
+          }, () {
+            _controller.sendCommand("+");
+          }),
+          const SizedBox(height: 8.0),
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 4.0),
+            child: Divider(color: Colors.white.withOpacity(0.05), height: 1.0, thickness: 1.0),
           ),
-          Row(
-            children: [
-              _buildSpeedButton("-", Icons.remove, () {
-                _controller.sendCommand("-");
-              }),
-              const SizedBox(width: 12.0),
-              _buildSpeedButton("+", Icons.add, () {
-                _controller.sendCommand("+");
-              }),
-            ],
-          ),
+          const SizedBox(height: 8.0),
+          _buildSpeedRow("TURN SPEED", _controller.turnSpeed, () {
+            int currentVal = int.tryParse(_controller.turnSpeed.replaceAll('%', '')) ?? 85;
+            int newVal = (currentVal - 10).clamp(10, 100);
+            _controller.setTurnSpeed(newVal);
+          }, () {
+            int currentVal = int.tryParse(_controller.turnSpeed.replaceAll('%', '')) ?? 85;
+            int newVal = (currentVal + 10).clamp(10, 100);
+            _controller.setTurnSpeed(newVal);
+          }),
         ],
       ),
+    );
+  }
+
+  Widget _buildSpeedRow(String title, String valueStr, VoidCallback onDec, VoidCallback onInc) {
+    return Row(
+      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+      children: [
+        Row(
+          children: [
+            Text(
+              "$title: ",
+              style: GoogleFonts.outfit(
+                color: Colors.white54,
+                fontSize: 10.0,
+                fontWeight: FontWeight.w600,
+                letterSpacing: 1.2,
+              ),
+            ),
+            Text(
+              valueStr,
+              style: GoogleFonts.orbitron(
+                color: const Color(0xFFFFB300),
+                fontSize: 18.0,
+                fontWeight: FontWeight.bold,
+              ),
+            ),
+          ],
+        ),
+        Row(
+          children: [
+            _buildSpeedButton("-", Icons.remove, onDec),
+            const SizedBox(width: 12.0),
+            _buildSpeedButton("+", Icons.add, onInc),
+          ],
+        ),
+      ],
     );
   }
 
@@ -894,10 +917,27 @@ class _DashboardPageState extends State<DashboardPage> {
   }
 
   Widget _buildPathFinderPanel() {
-    final path = _selectedAlg == "BFS" 
+   final path = _selectedAlg == "BFS" 
         ? _calculateBfsPath(_startNode, _endNode)
         : _calculateDfsPath(_startNode, _endNode);
     final pathText = path.isEmpty ? "No path found" : path.join(" ➔ ");
+
+    // --- NEW LOGIC: Calculate starting direction ---
+    String startDirection = "EAST"; // Fallback
+    if (path.length > 1) {
+      final firstNode = path[0];
+      final secondNode = path[1];
+      final neighbors = adjMap[firstNode] ?? [];
+      
+      // Find the index of the second node in the first node's adjacency list
+      final dirIndex = neighbors.indexOf(secondNode);
+      
+      // Map the index to a readable direction
+      const dirNames = ["NORTH", "NORTHEAST", "EAST", "SOUTHEAST", "SOUTH", "SOUTHWEST", "WEST", "NORTHWEST"];
+      if (dirIndex >= 0 && dirIndex < dirNames.length) {
+        startDirection = dirNames[dirIndex];
+      }
+    }
 
     return Container(
       margin: const EdgeInsets.symmetric(vertical: 4.0),
@@ -962,8 +1002,11 @@ class _DashboardPageState extends State<DashboardPage> {
             children: [
               const Icon(Icons.info_outline, color: Color(0xFF00E5FF), size: 12),
               const SizedBox(width: 6.0),
+              // --- DYNAMIC INSTRUCTION TEXT ---
               Text(
-                "PLACE ROBOT AT NODE $_startNode FACING EAST (RIGHT ➔ ON MAP)",
+                _startNode == _endNode 
+                    ? "ROBOT IS ALREADY AT DESTINATION" 
+                    : "PLACE ROBOT AT NODE $_startNode FACING $startDirection",
                 style: GoogleFonts.orbitron(
                   color: const Color(0xFF00E5FF),
                   fontSize: 8.5,
@@ -1231,29 +1274,31 @@ class _DashboardPageState extends State<DashboardPage> {
                       ),
                     ),
                   )
-                : ListView.builder(
-                    itemCount: _controller.consoleLogs.length,
-                    itemBuilder: (context, index) {
-                      final log = _controller.consoleLogs[index];
-                      Color logColor = Colors.white70;
-                      if (log.contains("App -> Pico")) {
-                        logColor = const Color(0xFF00E5FF);
-                      } else if (log.contains("Pico -> App")) {
-                        logColor = const Color(0xFFFFB300);
-                      } else if (log.contains("Error")) {
-                        logColor = Colors.redAccent;
-                      }
-                      return Padding(
-                        padding: const EdgeInsets.symmetric(vertical: 1.0),
-                        child: Text(
-                          log,
-                          style: GoogleFonts.firaCode(
-                            color: logColor,
-                            fontSize: 10.0,
+                : SelectionArea( // <-- 1. Add this wrapper here
+                    child: ListView.builder(
+                      itemCount: _controller.consoleLogs.length,
+                      itemBuilder: (context, index) {
+                        final log = _controller.consoleLogs[index];
+                        Color logColor = Colors.white70;
+                        if (log.contains("App -> Pico")) {
+                          logColor = const Color(0xFF00E5FF);
+                        } else if (log.contains("Pico -> App")) {
+                          logColor = const Color(0xFFFFB300);
+                        } else if (log.contains("Error")) {
+                          logColor = Colors.redAccent;
+                        }
+                        return Padding(
+                          padding: const EdgeInsets.symmetric(vertical: 1.0),
+                          child: Text( // <-- 2. Change this back to normal Text
+                            log,
+                            style: GoogleFonts.firaCode(
+                              color: logColor,
+                              fontSize: 10.0,
+                            ),
                           ),
-                        ),
-                      );
-                    },
+                        );
+                      },
+                    ),
                   ),
           ),
         ],
@@ -1356,6 +1401,16 @@ class _DashboardPageState extends State<DashboardPage> {
         ? _calculateBfsPath(_startNode, _endNode)
         : _calculateDfsPath(_startNode, _endNode);
 
+    // Derive the start direction index from the first edge of the planned path
+    int startDirectionIndex = 2; // default: East
+    if (plannedPath.length > 1) {
+      final firstNode = plannedPath[0];
+      final secondNode = plannedPath[1];
+      final neighbors = adjMap[firstNode] ?? [];
+      final idx = neighbors.indexOf(secondNode);
+      if (idx >= 0) startDirectionIndex = idx;
+    }
+
     return Container(
       padding: const EdgeInsets.all(12.0),
       decoration: BoxDecoration(
@@ -1392,6 +1447,7 @@ class _DashboardPageState extends State<DashboardPage> {
                     goalNode: _endNode,
                     plannedPath: plannedPath,
                     passedNodes: _controller.passedNodes,
+                    startDirectionIndex: startDirectionIndex,
                   ),
                 ),
               ),
@@ -1408,12 +1464,14 @@ class NodeMapPainter extends CustomPainter {
   final int goalNode;
   final List<int> plannedPath;
   final List<int> passedNodes;
+  final int startDirectionIndex; // 0=N,1=NE,2=E,3=SE,4=S,5=SW,6=W,7=NW
 
   NodeMapPainter({
     required this.startNode,
     required this.goalNode,
     required this.plannedPath,
     required this.passedNodes,
+    this.startDirectionIndex = 2, // default East
   });
 
   static const Map<int, Offset> nodePositions = {
@@ -1600,35 +1658,43 @@ class NodeMapPainter extends CustomPainter {
       );
 
       if (id == startNode) {
-        // Draw initial heading indicator (pointing East / Right)
-        final arrowPaint = Paint()
+        // Draw a directional compass badge next to the start node.
+        // The arrow rotates to match the first step direction of the planned path.
+        const double badgeRadius = 11.0;
+        final double badgeCx = center.dx + nodeRadius + 6 + badgeRadius;
+        final double badgeCy = center.dy;
+        final Offset badgeCenter = Offset(badgeCx, badgeCy);
+
+        // Badge background circle
+        final badgeBgPaint = Paint()
           ..color = const Color(0xFF00E5FF)
           ..style = PaintingStyle.fill;
-        
-        final path = Path();
-        double startX = center.dx + nodeRadius + 5;
-        double startY = center.dy;
-        
-        path.moveTo(startX, startY - 6); // Top point
-        path.lineTo(startX + 10, startY); // Tip pointing right (East)
-        path.lineTo(startX, startY + 6); // Bottom point
-        path.close();
-        canvas.drawPath(path, arrowPaint);
+        canvas.drawCircle(badgeCenter, badgeRadius, badgeBgPaint);
 
-        // Draw a subtle "E" text above the arrow
-        final textPainter = TextPainter(
-          text: const TextSpan(
-            text: "E",
-            style: TextStyle(
-              color: Color(0xFF00E5FF),
-              fontSize: 9.0,
-              fontWeight: FontWeight.bold,
-            ),
-          ),
-          textDirection: TextDirection.ltr,
-        );
-        textPainter.layout();
-        textPainter.paint(canvas, Offset(startX + 2, startY - 16));
+        // Rotate canvas around badge centre to point in the right direction.
+        // Direction indices: 0=N, 2=E, 4=S, 6=W (each step = 45°)
+        // Angle relative to East (the base arrow direction):
+        //   angle = (dirIndex - 2) * pi/4
+        final double arrowAngle = (startDirectionIndex - 2) * (3.14159265 / 4);
+        canvas.save();
+        canvas.translate(badgeCx, badgeCy);
+        canvas.rotate(arrowAngle);
+
+        // Arrow drawn centred at (0,0) pointing East
+        final arrowPaint = Paint()
+          ..color = const Color(0xFF0C0C0E)
+          ..style = PaintingStyle.fill;
+        final arrowPath = Path();
+        // Shaft
+        arrowPath.addRect(const Rect.fromLTWH(-5.5, -2.0, 7.0, 4.0));
+        // Arrowhead
+        arrowPath.moveTo(1.5, -4.5);
+        arrowPath.lineTo(6.0, 0);
+        arrowPath.lineTo(1.5, 4.5);
+        arrowPath.close();
+        canvas.drawPath(arrowPath, arrowPaint);
+
+        canvas.restore();
       }
     });
   }
@@ -1638,6 +1704,7 @@ class NodeMapPainter extends CustomPainter {
     return oldDelegate.startNode != startNode ||
         oldDelegate.goalNode != goalNode ||
         oldDelegate.plannedPath != plannedPath ||
-        oldDelegate.passedNodes != passedNodes;
+        oldDelegate.passedNodes != passedNodes ||
+        oldDelegate.startDirectionIndex != startDirectionIndex;
   }
 }
