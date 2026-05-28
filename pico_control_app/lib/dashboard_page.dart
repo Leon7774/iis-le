@@ -1,3 +1,4 @@
+import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:google_fonts/google_fonts.dart';
@@ -28,7 +29,7 @@ class _DashboardPageState extends State<DashboardPage> {
   // Navigation variables
   int _startNode = 1;
   int _endNode = 4;
-  String _selectedAlg = "BFS";
+  String _selectedAlg = "SHORTEST";
   bool _isNavigating = false;
   bool _reachedDialogShown = false;
   String? _lastMode;
@@ -113,7 +114,11 @@ class _DashboardPageState extends State<DashboardPage> {
           ),
           title: Row(
             children: [
-              const Icon(Icons.check_circle, color: Color(0xFF00FF88), size: 28),
+              const Icon(
+                Icons.check_circle,
+                color: Color(0xFF00FF88),
+                size: 28,
+              ),
               const SizedBox(width: 12.0),
               Text(
                 "DESTINATION REACHED",
@@ -127,11 +132,8 @@ class _DashboardPageState extends State<DashboardPage> {
             ],
           ),
           content: Text(
-            "The robot has successfully navigated to Node ${_controller.navEnd} via ${_selectedAlg}.",
-            style: GoogleFonts.outfit(
-              color: Colors.white70,
-              fontSize: 13.0,
-            ),
+            "The robot has successfully navigated to Node ${_controller.navEnd} via $_selectedAlg.",
+            style: GoogleFonts.outfit(color: Colors.white70, fontSize: 13.0),
           ),
           actions: [
             TextButton(
@@ -213,17 +215,20 @@ class _DashboardPageState extends State<DashboardPage> {
         _isFwd = isDown;
         changed = true;
       }
-    } else if (key == LogicalKeyboardKey.keyS || key == LogicalKeyboardKey.arrowDown) {
+    } else if (key == LogicalKeyboardKey.keyS ||
+        key == LogicalKeyboardKey.arrowDown) {
       if (_isBwd != isDown) {
         _isBwd = isDown;
         changed = true;
       }
-    } else if (key == LogicalKeyboardKey.keyA || key == LogicalKeyboardKey.arrowLeft) {
+    } else if (key == LogicalKeyboardKey.keyA ||
+        key == LogicalKeyboardKey.arrowLeft) {
       if (_isLeft != isDown) {
         _isLeft = isDown;
         changed = true;
       }
-    } else if (key == LogicalKeyboardKey.keyD || key == LogicalKeyboardKey.arrowRight) {
+    } else if (key == LogicalKeyboardKey.keyD ||
+        key == LogicalKeyboardKey.arrowRight) {
       if (_isRight != isDown) {
         _isRight = isDown;
         changed = true;
@@ -260,7 +265,100 @@ class _DashboardPageState extends State<DashboardPage> {
     21: [17, 0, 0, 0, 0, 0, 20, 0],
   };
 
-  // Calculates BFS Path locally for immediate UI preview
+  static const double _mapWidth = 900.0;
+  static const double _mapHeight = 1350.0;
+
+  static const Map<int, Offset> nodePositions = {
+    1: Offset(0.06, 0.04),
+    2: Offset(0.41, 0.04),
+    3: Offset(0.76, 0.04),
+    4: Offset(0.41, 0.18),
+    5: Offset(0.59, 0.18),
+    6: Offset(0.94, 0.18),
+    7: Offset(0.06, 0.29),
+    8: Offset(0.24, 0.29),
+    9: Offset(0.41, 0.29),
+    10: Offset(0.76, 0.32),
+    11: Offset(0.24, 0.43),
+    12: Offset(0.76, 0.43),
+    13: Offset(0.24, 0.61),
+    14: Offset(0.76, 0.61),
+    15: Offset(0.59, 0.71),
+    16: Offset(0.76, 0.71),
+    17: Offset(0.94, 0.71),
+    18: Offset(0.24, 0.86),
+    19: Offset(0.59, 0.86),
+    20: Offset(0.59, 0.96),
+    21: Offset(0.94, 0.96),
+  };
+
+  int _edgeWeight(int from, int to) {
+    final a = nodePositions[from];
+    final b = nodePositions[to];
+    if (a == null || b == null) return 999999;
+    final dx = (a.dx - b.dx) * _mapWidth;
+    final dy = (a.dy - b.dy) * _mapHeight;
+    return math.sqrt((dx * dx) + (dy * dy)).round();
+  }
+
+  int _pathWeight(List<int> path) {
+    if (path.length < 2) return 0;
+    int total = 0;
+    for (int i = 0; i < path.length - 1; i++) {
+      total += _edgeWeight(path[i], path[i + 1]);
+    }
+    return total;
+  }
+
+  int _directionIndexBetween(int from, int to) {
+    final neighbors = adjMap[from] ?? [];
+    final idx = neighbors.indexOf(to);
+    return idx >= 0 ? idx : 2;
+  }
+
+  List<int> _calculateShortestPath(int start, int goal) {
+    if (start == goal) return [start];
+    final nodes = adjMap.keys.toList();
+    final dist = <int, int>{for (final node in nodes) node: 999999};
+    final prev = <int, int>{};
+    final unvisited = nodes.toSet();
+    dist[start] = 0;
+
+    while (unvisited.isNotEmpty) {
+      int? curr;
+      int best = 999999;
+      for (final node in unvisited) {
+        final d = dist[node] ?? 999999;
+        if (d < best) {
+          best = d;
+          curr = node;
+        }
+      }
+      if (curr == null || curr == goal || best == 999999) break;
+      unvisited.remove(curr);
+
+      for (final neighbor in adjMap[curr] ?? const <int>[]) {
+        if (neighbor == 0 || !unvisited.contains(neighbor)) continue;
+        final alt = best + _edgeWeight(curr, neighbor);
+        if (alt < (dist[neighbor] ?? 999999)) {
+          dist[neighbor] = alt;
+          prev[neighbor] = curr;
+        }
+      }
+    }
+
+    if (!prev.containsKey(goal)) return [];
+    final path = <int>[];
+    var node = goal;
+    while (node != start) {
+      path.add(node);
+      node = prev[node]!;
+    }
+    path.add(start);
+    return path.reversed.toList();
+  }
+
+  // Calculates BFS Path locally for edge-count comparison
   List<int> _calculateBfsPath(int start, int goal) {
     if (start == goal) return [start];
     final Map<int, int> parentMap = {};
@@ -291,6 +389,16 @@ class _DashboardPageState extends State<DashboardPage> {
     return [];
   }
 
+  List<int> _calculateSelectedPath(int start, int goal) {
+    if (_selectedAlg == "DFS") {
+      return _calculateDfsPath(start, goal);
+    }
+    if (_selectedAlg == "BFS") {
+      return _calculateBfsPath(start, goal);
+    }
+    return _calculateShortestPath(start, goal);
+  }
+
   // Calculates DFS Path locally for immediate UI preview
   List<int> _calculateDfsPath(int start, int goal) {
     final Set<int> visited = {};
@@ -312,6 +420,7 @@ class _DashboardPageState extends State<DashboardPage> {
       path.removeLast();
       return false;
     }
+
     if (dfs(start)) {
       return path;
     }
@@ -338,10 +447,7 @@ class _DashboardPageState extends State<DashboardPage> {
       decoration: BoxDecoration(
         color: Colors.white.withOpacity(0.05),
         borderRadius: BorderRadius.circular(20.0),
-        border: Border.all(
-          color: statusColor.withOpacity(0.3),
-          width: 1.5,
-        ),
+        border: Border.all(color: statusColor.withOpacity(0.3), width: 1.5),
         boxShadow: [
           BoxShadow(
             color: statusColor.withOpacity(0.05),
@@ -394,7 +500,9 @@ class _DashboardPageState extends State<DashboardPage> {
               backgroundColor: _controller.isConnected
                   ? Colors.redAccent.withOpacity(0.2)
                   : const Color(0xFF00E5FF).withOpacity(0.15),
-              foregroundColor: _controller.isConnected ? Colors.redAccent : const Color(0xFF00E5FF),
+              foregroundColor: _controller.isConnected
+                  ? Colors.redAccent
+                  : const Color(0xFF00E5FF),
               side: BorderSide(
                 color: _controller.isConnected
                     ? Colors.redAccent.withOpacity(0.5)
@@ -403,7 +511,10 @@ class _DashboardPageState extends State<DashboardPage> {
               shape: RoundedRectangleBorder(
                 borderRadius: BorderRadius.circular(12.0),
               ),
-              padding: const EdgeInsets.symmetric(horizontal: 12.0, vertical: 8.0),
+              padding: const EdgeInsets.symmetric(
+                horizontal: 12.0,
+                vertical: 8.0,
+              ),
               minimumSize: Size.zero,
               tapTargetSize: MaterialTapTargetSize.shrinkWrap,
               elevation: 0,
@@ -454,7 +565,7 @@ class _DashboardPageState extends State<DashboardPage> {
           Expanded(
             child: _buildModeButton(
               mode: "NAV",
-              label: "BFS NAV",
+              label: "WEIGHTED NAV",
               isSelected: currentMode == "NAV",
               enabled: isConnected,
             ),
@@ -470,7 +581,9 @@ class _DashboardPageState extends State<DashboardPage> {
     required bool isSelected,
     required bool enabled,
   }) {
-    Color activeColor = mode == "LINE" ? const Color(0xFFFFB300) : (mode == "NAV" ? const Color(0xFF9D4EDD) : const Color(0xFF00E5FF));
+    Color activeColor = mode == "LINE"
+        ? const Color(0xFFFFB300)
+        : (mode == "NAV" ? const Color(0xFF9D4EDD) : const Color(0xFF00E5FF));
     return GestureDetector(
       onTap: enabled
           ? () {
@@ -481,10 +594,14 @@ class _DashboardPageState extends State<DashboardPage> {
         duration: const Duration(milliseconds: 200),
         padding: const EdgeInsets.symmetric(vertical: 10.0),
         decoration: BoxDecoration(
-          color: isSelected ? activeColor.withOpacity(0.15) : Colors.transparent,
+          color: isSelected
+              ? activeColor.withOpacity(0.15)
+              : Colors.transparent,
           borderRadius: BorderRadius.circular(12.0),
           border: Border.all(
-            color: isSelected ? activeColor.withOpacity(0.6) : Colors.transparent,
+            color: isSelected
+                ? activeColor.withOpacity(0.6)
+                : Colors.transparent,
             width: 1.5,
           ),
         ),
@@ -511,38 +628,57 @@ class _DashboardPageState extends State<DashboardPage> {
       decoration: BoxDecoration(
         color: Colors.white.withOpacity(0.03),
         borderRadius: BorderRadius.circular(20.0),
-        border: Border.all(
-          color: Colors.white.withOpacity(0.08),
-        ),
+        border: Border.all(color: Colors.white.withOpacity(0.08)),
       ),
       child: Column(
         children: [
-          _buildSpeedRow("TRACE SPEED", _controller.currentSpeed, () {
-            _controller.sendCommand("-");
-          }, () {
-            _controller.sendCommand("+");
-          }),
+          _buildSpeedRow(
+            "TRACE SPEED",
+            _controller.currentSpeed,
+            () {
+              _controller.sendCommand("-");
+            },
+            () {
+              _controller.sendCommand("+");
+            },
+          ),
           const SizedBox(height: 8.0),
           Padding(
             padding: const EdgeInsets.symmetric(horizontal: 4.0),
-            child: Divider(color: Colors.white.withOpacity(0.05), height: 1.0, thickness: 1.0),
+            child: Divider(
+              color: Colors.white.withOpacity(0.05),
+              height: 1.0,
+              thickness: 1.0,
+            ),
           ),
           const SizedBox(height: 8.0),
-          _buildSpeedRow("TURN SPEED", _controller.turnSpeed, () {
-            int currentVal = int.tryParse(_controller.turnSpeed.replaceAll('%', '')) ?? 85;
-            int newVal = (currentVal - 10).clamp(10, 100);
-            _controller.setTurnSpeed(newVal);
-          }, () {
-            int currentVal = int.tryParse(_controller.turnSpeed.replaceAll('%', '')) ?? 85;
-            int newVal = (currentVal + 10).clamp(10, 100);
-            _controller.setTurnSpeed(newVal);
-          }),
+          _buildSpeedRow(
+            "TURN SPEED",
+            _controller.turnSpeed,
+            () {
+              int currentVal =
+                  int.tryParse(_controller.turnSpeed.replaceAll('%', '')) ?? 85;
+              int newVal = (currentVal - 10).clamp(10, 100);
+              _controller.setTurnSpeed(newVal);
+            },
+            () {
+              int currentVal =
+                  int.tryParse(_controller.turnSpeed.replaceAll('%', '')) ?? 85;
+              int newVal = (currentVal + 10).clamp(10, 100);
+              _controller.setTurnSpeed(newVal);
+            },
+          ),
         ],
       ),
     );
   }
 
-  Widget _buildSpeedRow(String title, String valueStr, VoidCallback onDec, VoidCallback onInc) {
+  Widget _buildSpeedRow(
+    String title,
+    String valueStr,
+    VoidCallback onDec,
+    VoidCallback onInc,
+  ) {
     return Row(
       mainAxisAlignment: MainAxisAlignment.spaceBetween,
       children: [
@@ -578,7 +714,11 @@ class _DashboardPageState extends State<DashboardPage> {
     );
   }
 
-  Widget _buildSpeedButton(String label, IconData icon, VoidCallback onPressed) {
+  Widget _buildSpeedButton(
+    String label,
+    IconData icon,
+    VoidCallback onPressed,
+  ) {
     bool enabled = _controller.isConnected;
     return GestureDetector(
       onTap: enabled ? onPressed : null,
@@ -586,10 +726,14 @@ class _DashboardPageState extends State<DashboardPage> {
         width: 36.0,
         height: 36.0,
         decoration: BoxDecoration(
-          color: enabled ? Colors.white.withOpacity(0.06) : Colors.white.withOpacity(0.02),
+          color: enabled
+              ? Colors.white.withOpacity(0.06)
+              : Colors.white.withOpacity(0.02),
           borderRadius: BorderRadius.circular(10.0),
           border: Border.all(
-            color: enabled ? const Color(0xFFFFB300).withOpacity(0.4) : Colors.white.withOpacity(0.05),
+            color: enabled
+                ? const Color(0xFFFFB300).withOpacity(0.4)
+                : Colors.white.withOpacity(0.05),
           ),
         ),
         child: Center(
@@ -657,10 +801,14 @@ class _DashboardPageState extends State<DashboardPage> {
           width: 180,
           height: 152,
           decoration: BoxDecoration(
-            color: isConnected ? activeColor.withOpacity(0.05) : Colors.white.withOpacity(0.01),
+            color: isConnected
+                ? activeColor.withOpacity(0.05)
+                : Colors.white.withOpacity(0.01),
             borderRadius: BorderRadius.circular(30.0),
             border: Border.all(
-              color: isConnected ? activeColor.withOpacity(0.5) : Colors.white.withOpacity(0.05),
+              color: isConnected
+                  ? activeColor.withOpacity(0.5)
+                  : Colors.white.withOpacity(0.05),
               width: 1.5,
             ),
             boxShadow: isConnected
@@ -669,7 +817,7 @@ class _DashboardPageState extends State<DashboardPage> {
                       color: activeColor.withOpacity(0.05),
                       blurRadius: 12,
                       spreadRadius: 1,
-                    )
+                    ),
                   ]
                 : [],
           ),
@@ -710,10 +858,14 @@ class _DashboardPageState extends State<DashboardPage> {
           width: 180,
           height: 152,
           decoration: BoxDecoration(
-            color: isConnected ? activeColor.withOpacity(0.05) : Colors.white.withOpacity(0.01),
+            color: isConnected
+                ? activeColor.withOpacity(0.05)
+                : Colors.white.withOpacity(0.01),
             borderRadius: BorderRadius.circular(30.0),
             border: Border.all(
-              color: isConnected ? activeColor.withOpacity(0.5) : Colors.white.withOpacity(0.05),
+              color: isConnected
+                  ? activeColor.withOpacity(0.5)
+                  : Colors.white.withOpacity(0.05),
               width: 1.5,
             ),
             boxShadow: isConnected
@@ -722,7 +874,7 @@ class _DashboardPageState extends State<DashboardPage> {
                       color: activeColor.withOpacity(0.05),
                       blurRadius: 12,
                       spreadRadius: 1,
-                    )
+                    ),
                   ]
                 : [],
           ),
@@ -843,19 +995,19 @@ class _DashboardPageState extends State<DashboardPage> {
           boxShadow: enabled
               ? [
                   BoxShadow(
-                    color: isActive ? color.withOpacity(0.2) : color.withOpacity(0.03),
+                    color: isActive
+                        ? color.withOpacity(0.2)
+                        : color.withOpacity(0.03),
                     blurRadius: isActive ? 12 : 8,
                     spreadRadius: isActive ? 2 : 1,
-                  )
+                  ),
                 ]
               : [],
         ),
         child: Center(
           child: Icon(
             icon,
-            color: enabled
-                ? (isActive ? Colors.white : color)
-                : Colors.white12,
+            color: enabled ? (isActive ? Colors.white : color) : Colors.white12,
             size: 36,
           ),
         ),
@@ -887,18 +1039,20 @@ class _DashboardPageState extends State<DashboardPage> {
           child: DropdownButtonHideUnderline(
             child: DropdownButton<String>(
               value: _selectedAlg,
-              items: ["BFS", "DFS"]
-                  .map((e) => DropdownMenuItem<String>(
-                        value: e,
-                        child: Text(
-                          e,
-                          style: GoogleFonts.orbitron(
-                            color: Colors.white,
-                            fontSize: 11.0,
-                            fontWeight: FontWeight.bold,
-                          ),
+              items: ["SHORTEST", "BFS", "DFS"]
+                  .map(
+                    (e) => DropdownMenuItem<String>(
+                      value: e,
+                      child: Text(
+                        e,
+                        style: GoogleFonts.orbitron(
+                          color: Colors.white,
+                          fontSize: 11.0,
+                          fontWeight: FontWeight.bold,
                         ),
-                      ))
+                      ),
+                    ),
+                  )
                   .toList(),
               onChanged: (val) {
                 if (val != null) {
@@ -917,23 +1071,25 @@ class _DashboardPageState extends State<DashboardPage> {
   }
 
   Widget _buildPathFinderPanel() {
-   final path = _selectedAlg == "BFS" 
-        ? _calculateBfsPath(_startNode, _endNode)
-        : _calculateDfsPath(_startNode, _endNode);
+    final path = _calculateSelectedPath(_startNode, _endNode);
     final pathText = path.isEmpty ? "No path found" : path.join(" ➔ ");
+    final weightText = path.isEmpty ? "--" : "${_pathWeight(path)} px";
 
-    // --- NEW LOGIC: Calculate starting direction ---
     String startDirection = "EAST"; // Fallback
     if (path.length > 1) {
       final firstNode = path[0];
       final secondNode = path[1];
-      final neighbors = adjMap[firstNode] ?? [];
-      
-      // Find the index of the second node in the first node's adjacency list
-      final dirIndex = neighbors.indexOf(secondNode);
-      
-      // Map the index to a readable direction
-      const dirNames = ["NORTH", "NORTHEAST", "EAST", "SOUTHEAST", "SOUTH", "SOUTHWEST", "WEST", "NORTHWEST"];
+      const dirNames = [
+        "NORTH",
+        "NORTHEAST",
+        "EAST",
+        "SOUTHEAST",
+        "SOUTH",
+        "SOUTHWEST",
+        "WEST",
+        "NORTHWEST",
+      ];
+      final dirIndex = _directionIndexBetween(firstNode, secondNode);
       if (dirIndex >= 0 && dirIndex < dirNames.length) {
         startDirection = dirNames[dirIndex];
       }
@@ -996,16 +1152,30 @@ class _DashboardPageState extends State<DashboardPage> {
               ),
             ],
           ),
+          const SizedBox(height: 4.0),
+          Text(
+            "TOTAL WEIGHT: $weightText",
+            style: GoogleFonts.outfit(
+              color: Colors.white38,
+              fontSize: 9.0,
+              fontWeight: FontWeight.bold,
+              letterSpacing: 0.8,
+            ),
+          ),
           const SizedBox(height: 6.0),
           Row(
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
-              const Icon(Icons.info_outline, color: Color(0xFF00E5FF), size: 12),
+              const Icon(
+                Icons.info_outline,
+                color: Color(0xFF00E5FF),
+                size: 12,
+              ),
               const SizedBox(width: 6.0),
               // --- DYNAMIC INSTRUCTION TEXT ---
               Text(
-                _startNode == _endNode 
-                    ? "ROBOT IS ALREADY AT DESTINATION" 
+                _startNode == _endNode
+                    ? "ROBOT IS ALREADY AT DESTINATION"
                     : "PLACE ROBOT AT NODE $_startNode FACING $startDirection",
                 style: GoogleFonts.orbitron(
                   color: const Color(0xFF00E5FF),
@@ -1021,7 +1191,11 @@ class _DashboardPageState extends State<DashboardPage> {
     );
   }
 
-  Widget _buildNodeDropdown(String label, int currentValue, ValueChanged<int?> onChanged) {
+  Widget _buildNodeDropdown(
+    String label,
+    int currentValue,
+    ValueChanged<int?> onChanged,
+  ) {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -1046,17 +1220,19 @@ class _DashboardPageState extends State<DashboardPage> {
             child: DropdownButton<int>(
               value: currentValue,
               items: List.generate(21, (i) => i + 1)
-                  .map((e) => DropdownMenuItem<int>(
-                        value: e,
-                        child: Text(
-                          "Node $e",
-                          style: GoogleFonts.orbitron(
-                            color: Colors.white,
-                            fontSize: 11.0,
-                            fontWeight: FontWeight.bold,
-                          ),
+                  .map(
+                    (e) => DropdownMenuItem<int>(
+                      value: e,
+                      child: Text(
+                        "Node $e",
+                        style: GoogleFonts.orbitron(
+                          color: Colors.white,
+                          fontSize: 11.0,
+                          fontWeight: FontWeight.bold,
                         ),
-                      ))
+                      ),
+                    ),
+                  )
                   .toList(),
               onChanged: onChanged,
               dropdownColor: const Color(0xFF1E1E24),
@@ -1099,10 +1275,14 @@ class _DashboardPageState extends State<DashboardPage> {
       child: Container(
         padding: const EdgeInsets.symmetric(vertical: 8.0),
         decoration: BoxDecoration(
-          color: isSelected ? Colors.white.withOpacity(0.04) : Colors.transparent,
+          color: isSelected
+              ? Colors.white.withOpacity(0.04)
+              : Colors.transparent,
           borderRadius: BorderRadius.circular(12.0),
           border: Border.all(
-            color: isSelected ? activeColor.withOpacity(0.4) : Colors.transparent,
+            color: isSelected
+                ? activeColor.withOpacity(0.4)
+                : Colors.transparent,
           ),
         ),
         child: Center(
@@ -1127,9 +1307,7 @@ class _DashboardPageState extends State<DashboardPage> {
       decoration: BoxDecoration(
         color: Colors.black.withOpacity(0.4),
         borderRadius: BorderRadius.circular(16.0),
-        border: Border.all(
-          color: Colors.white.withOpacity(0.05),
-        ),
+        border: Border.all(color: Colors.white.withOpacity(0.05)),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -1162,7 +1340,9 @@ class _DashboardPageState extends State<DashboardPage> {
   }
 
   Widget _buildSensorPod(String abbrev, String label, bool isOn) {
-    Color glowColor = isOn ? const Color(0xFF00E5FF) : Colors.white.withOpacity(0.05);
+    Color glowColor = isOn
+        ? const Color(0xFF00E5FF)
+        : Colors.white.withOpacity(0.05);
     return Column(
       mainAxisSize: MainAxisSize.min,
       children: [
@@ -1172,9 +1352,13 @@ class _DashboardPageState extends State<DashboardPage> {
           height: 48,
           decoration: BoxDecoration(
             shape: BoxShape.circle,
-            color: isOn ? glowColor.withOpacity(0.1) : Colors.white.withOpacity(0.01),
+            color: isOn
+                ? glowColor.withOpacity(0.1)
+                : Colors.white.withOpacity(0.01),
             border: Border.all(
-              color: isOn ? glowColor.withOpacity(0.7) : Colors.white.withOpacity(0.08),
+              color: isOn
+                  ? glowColor.withOpacity(0.7)
+                  : Colors.white.withOpacity(0.08),
               width: 1.5,
             ),
             boxShadow: isOn
@@ -1183,7 +1367,7 @@ class _DashboardPageState extends State<DashboardPage> {
                       color: glowColor.withOpacity(0.2),
                       blurRadius: 8,
                       spreadRadius: 1,
-                    )
+                    ),
                   ]
                 : [],
           ),
@@ -1226,9 +1410,7 @@ class _DashboardPageState extends State<DashboardPage> {
       decoration: BoxDecoration(
         color: Colors.black.withOpacity(0.4),
         borderRadius: BorderRadius.circular(16.0),
-        border: Border.all(
-          color: Colors.white.withOpacity(0.05),
-        ),
+        border: Border.all(color: Colors.white.withOpacity(0.05)),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -1274,7 +1456,8 @@ class _DashboardPageState extends State<DashboardPage> {
                       ),
                     ),
                   )
-                : SelectionArea( // <-- 1. Add this wrapper here
+                : SelectionArea(
+                    // <-- 1. Add this wrapper here
                     child: ListView.builder(
                       itemCount: _controller.consoleLogs.length,
                       itemBuilder: (context, index) {
@@ -1289,7 +1472,8 @@ class _DashboardPageState extends State<DashboardPage> {
                         }
                         return Padding(
                           padding: const EdgeInsets.symmetric(vertical: 1.0),
-                          child: Text( // <-- 2. Change this back to normal Text
+                          child: Text(
+                            // <-- 2. Change this back to normal Text
                             log,
                             style: GoogleFonts.firaCode(
                               color: logColor,
@@ -1345,7 +1529,9 @@ class _DashboardPageState extends State<DashboardPage> {
                       height: 16.0,
                       child: CircularProgressIndicator(
                         strokeWidth: 1.5,
-                        valueColor: AlwaysStoppedAnimation<Color>(Color(0xFF00E5FF)),
+                        valueColor: AlwaysStoppedAnimation<Color>(
+                          Color(0xFF00E5FF),
+                        ),
                       ),
                     ),
                   ),
@@ -1354,14 +1540,15 @@ class _DashboardPageState extends State<DashboardPage> {
           ),
           body: SafeArea(
             child: Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 8.0),
+              padding: const EdgeInsets.symmetric(
+                horizontal: 16.0,
+                vertical: 8.0,
+              ),
               child: Row(
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
                   // Left control panel (Forward/Backward)
-                  Center(
-                    child: _buildLeftDriveControls(),
-                  ),
+                  Center(child: _buildLeftDriveControls()),
                   const SizedBox(width: 16.0),
                   // Center panel (Status, Mode selector, Speed panel, Tabs, Log/Sensor View)
                   Expanded(
@@ -1370,23 +1557,23 @@ class _DashboardPageState extends State<DashboardPage> {
                         _buildStatusHeader(),
                         _buildModeSelector(),
                         _buildSpeedPanel(),
-                        if (_controller.activeMode == "NAV" || _activeTab == "MAP") _buildPathFinderPanel(),
+                        if (_controller.activeMode == "NAV" ||
+                            _activeTab == "MAP")
+                          _buildPathFinderPanel(),
                         _buildTabSelector(),
                         Expanded(
                           child: _activeTab == "MAP"
                               ? _buildMapPanel()
                               : (_activeTab == "LOGS"
-                                  ? _buildConsolePanel()
-                                  : _buildSensorPanel()),
+                                    ? _buildConsolePanel()
+                                    : _buildSensorPanel()),
                         ),
                       ],
                     ),
                   ),
                   const SizedBox(width: 16.0),
                   // Right control panel (Left/Right)
-                  Center(
-                    child: _buildRightSteerControls(),
-                  ),
+                  Center(child: _buildRightSteerControls()),
                 ],
               ),
             ),
@@ -1397,18 +1584,15 @@ class _DashboardPageState extends State<DashboardPage> {
   }
 
   Widget _buildMapPanel() {
-    final plannedPath = _selectedAlg == "BFS" 
-        ? _calculateBfsPath(_startNode, _endNode)
-        : _calculateDfsPath(_startNode, _endNode);
+    final plannedPath = _calculateSelectedPath(_startNode, _endNode);
 
     // Derive the start direction index from the first edge of the planned path
     int startDirectionIndex = 2; // default: East
     if (plannedPath.length > 1) {
-      final firstNode = plannedPath[0];
-      final secondNode = plannedPath[1];
-      final neighbors = adjMap[firstNode] ?? [];
-      final idx = neighbors.indexOf(secondNode);
-      if (idx >= 0) startDirectionIndex = idx;
+      startDirectionIndex = _directionIndexBetween(
+        plannedPath[0],
+        plannedPath[1],
+      );
     }
 
     return Container(
@@ -1416,9 +1600,7 @@ class _DashboardPageState extends State<DashboardPage> {
       decoration: BoxDecoration(
         color: Colors.black.withOpacity(0.4),
         borderRadius: BorderRadius.circular(16.0),
-        border: Border.all(
-          color: Colors.white.withOpacity(0.05),
-        ),
+        border: Border.all(color: Colors.white.withOpacity(0.05)),
       ),
       child: Column(
         children: [
@@ -1448,6 +1630,7 @@ class _DashboardPageState extends State<DashboardPage> {
                     plannedPath: plannedPath,
                     passedNodes: _controller.passedNodes,
                     startDirectionIndex: startDirectionIndex,
+                    showWeights: true,
                   ),
                 ),
               ),
@@ -1465,6 +1648,7 @@ class NodeMapPainter extends CustomPainter {
   final List<int> plannedPath;
   final List<int> passedNodes;
   final int startDirectionIndex; // 0=N,1=NE,2=E,3=SE,4=S,5=SW,6=W,7=NW
+  final bool showWeights;
 
   NodeMapPainter({
     required this.startNode,
@@ -1472,6 +1656,7 @@ class NodeMapPainter extends CustomPainter {
     required this.plannedPath,
     required this.passedNodes,
     this.startDirectionIndex = 2, // default East
+    this.showWeights = false,
   });
 
   static const Map<int, Offset> nodePositions = {
@@ -1522,6 +1707,50 @@ class NodeMapPainter extends CustomPainter {
     21: [17, 0, 0, 0, 0, 0, 20, 0],
   };
 
+  int edgeWeight(int from, int to) {
+    final a = nodePositions[from];
+    final b = nodePositions[to];
+    if (a == null || b == null) return 0;
+    const mapWidth = 900.0;
+    const mapHeight = 1350.0;
+    final dx = (a.dx - b.dx) * mapWidth;
+    final dy = (a.dy - b.dy) * mapHeight;
+    return math.sqrt((dx * dx) + (dy * dy)).round();
+  }
+
+  void _drawWeightLabel(Canvas canvas, Offset p1, Offset p2, int weight) {
+    final mid = Offset((p1.dx + p2.dx) / 2, (p1.dy + p2.dy) / 2);
+    final textPainter = TextPainter(
+      text: TextSpan(
+        text: "$weight",
+        style: const TextStyle(
+          color: Color(0xFFB8B8C8),
+          fontSize: 10.0,
+          fontWeight: FontWeight.w700,
+          fontFamily: 'Orbitron',
+        ),
+      ),
+      textDirection: TextDirection.ltr,
+    );
+    textPainter.layout();
+    final labelRect = Rect.fromCenter(
+      center: mid,
+      width: textPainter.width + 10,
+      height: textPainter.height + 5,
+    );
+    final bgPaint = Paint()
+      ..color = const Color(0xFF0C0C0E).withValues(alpha: 0.86)
+      ..style = PaintingStyle.fill;
+    canvas.drawRRect(
+      RRect.fromRectAndRadius(labelRect, const Radius.circular(5.0)),
+      bgPaint,
+    );
+    textPainter.paint(
+      canvas,
+      Offset(mid.dx - textPainter.width / 2, mid.dy - textPainter.height / 2),
+    );
+  }
+
   @override
   void paint(Canvas canvas, Size size) {
     final edgePaint = Paint()
@@ -1552,11 +1781,16 @@ class NodeMapPainter extends CustomPainter {
       final p1 = getPos(fromNode);
       for (var neighbor in neighbors) {
         if (neighbor != 0) {
-          final edgeKey = fromNode < neighbor ? "$fromNode-$neighbor" : "$neighbor-$fromNode";
+          final edgeKey = fromNode < neighbor
+              ? "$fromNode-$neighbor"
+              : "$neighbor-$fromNode";
           if (!drawnEdges.contains(edgeKey)) {
             drawnEdges.add(edgeKey);
             final p2 = getPos(neighbor);
             canvas.drawLine(p1, p2, edgePaint);
+            if (showWeights) {
+              _drawWeightLabel(canvas, p1, p2, edgeWeight(fromNode, neighbor));
+            }
           }
         }
       }
@@ -1625,7 +1859,9 @@ class NodeMapPainter extends CustomPainter {
       canvas.drawCircle(
         center,
         currentRadius,
-        Paint()..color = fillColor..style = PaintingStyle.fill,
+        Paint()
+          ..color = fillColor
+          ..style = PaintingStyle.fill,
       );
 
       canvas.drawCircle(
@@ -1638,15 +1874,14 @@ class NodeMapPainter extends CustomPainter {
       );
 
       final textStyle = TextStyle(
-        color: (id == currentRobotNode) ? Colors.black : Colors.white.withOpacity(0.9),
+        color: (id == currentRobotNode)
+            ? Colors.black
+            : Colors.white.withOpacity(0.9),
         fontSize: 13.0,
         fontWeight: FontWeight.bold,
         fontFamily: 'Orbitron',
       );
-      final textSpan = TextSpan(
-        text: "$id",
-        style: textStyle,
-      );
+      final textSpan = TextSpan(text: "$id", style: textStyle);
       final textPainter = TextPainter(
         text: textSpan,
         textDirection: TextDirection.ltr,
@@ -1654,7 +1889,10 @@ class NodeMapPainter extends CustomPainter {
       textPainter.layout();
       textPainter.paint(
         canvas,
-        Offset(center.dx - textPainter.width / 2, center.dy - textPainter.height / 2),
+        Offset(
+          center.dx - textPainter.width / 2,
+          center.dy - textPainter.height / 2,
+        ),
       );
 
       if (id == startNode) {
@@ -1705,6 +1943,7 @@ class NodeMapPainter extends CustomPainter {
         oldDelegate.goalNode != goalNode ||
         oldDelegate.plannedPath != plannedPath ||
         oldDelegate.passedNodes != passedNodes ||
-        oldDelegate.startDirectionIndex != startDirectionIndex;
+        oldDelegate.startDirectionIndex != startDirectionIndex ||
+        oldDelegate.showWeights != showWeights;
   }
 }

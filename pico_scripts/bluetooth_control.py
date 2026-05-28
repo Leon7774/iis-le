@@ -1,9 +1,10 @@
 # ============================================================
 # Raspberry Pi Pico W - Bluetooth & Line Tracing Control
-# Supporting Manual RC, Auto Line Follow, & BFS Node Nav
+# Supporting Manual RC, Auto Line Follow, & Weighted Node Nav
 # ============================================================
 
 import bluetooth
+import math
 import struct
 import time
 from machine import Pin, PWM, ADC
@@ -41,6 +42,7 @@ right_sensor  = ADC(Pin(28))
 
 ANALOG_THRESHOLD = 60000
 DIGITAL_BLACK    = 0
+NAV_NODE_CENTER_MS = 180
 
 # ============================================================
 # GRAPH DEFINITIONS
@@ -86,12 +88,86 @@ last_sensor_send = 0      # Telemetry timer
 nav_start = 1             # Start node for pathfinder
 nav_end = 4               # Goal node for pathfinder
 nav_triggered = False     # Triggers path navigation sequence
-nav_path_type = "BFS"     # Routing algorithm: "BFS" or "DFS"
+nav_path_type = "SHORTEST" # Routing algorithm: "SHORTEST", "BFS", or "DFS"
 last_node_time = 0        # Debounce timestamp for node detection
 
 # ============================================================
-# BFS PATHFINDING
+# PATHFINDING
 # ============================================================
+
+NODE_POSITIONS = {
+    1: (54, 54),
+    2: (369, 54),
+    3: (684, 54),
+    4: (369, 243),
+    5: (531, 243),
+    6: (846, 243),
+    7: (54, 392),
+    8: (216, 392),
+    9: (369, 392),
+    10: (684, 432),
+    11: (216, 580),
+    12: (684, 580),
+    13: (216, 824),
+    14: (684, 824),
+    15: (531, 958),
+    16: (684, 958),
+    17: (846, 958),
+    18: (216, 1161),
+    19: (531, 1161),
+    20: (531, 1296),
+    21: (846, 1296),
+}
+
+def edge_weight(from_node, to_node):
+    x1, y1 = NODE_POSITIONS[from_node]
+    x2, y2 = NODE_POSITIONS[to_node]
+    dx = x1 - x2
+    dy = y1 - y2
+    return int(math.sqrt((dx * dx) + (dy * dy)) + 0.5)
+
+def shortest_path(start, goal):
+    if start == goal:
+        return []
+
+    dist = {}
+    prev = {}
+    unvisited = []
+    for node in range(1, len(adj)):
+        dist[node] = 999999
+        unvisited.append(node)
+    dist[start] = 0
+
+    while unvisited:
+        curr = None
+        best = 999999
+        for node in unvisited:
+            if dist[node] < best:
+                best = dist[node]
+                curr = node
+
+        if curr is None or curr == goal or best == 999999:
+            break
+        unvisited.remove(curr)
+
+        for direction, neighbor in enumerate(adj[curr]):
+            if neighbor != 0 and neighbor in unvisited:
+                alt = best + edge_weight(curr, neighbor)
+                if alt < dist[neighbor]:
+                    dist[neighbor] = alt
+                    prev[neighbor] = (curr, direction)
+
+    if goal not in prev:
+        return None
+
+    path = []
+    node = goal
+    while node != start:
+        parent, direction = prev[node]
+        path.append((parent, direction, node))
+        node = parent
+    path.reverse()
+    return path
 
 def bfs_path(start, goal):
     if start == goal:
@@ -336,7 +412,18 @@ def travel_to_next_node():
                     last_line_time = time.ticks_ms()
                     continue
                 else:
-                    # NAV mode: Stop and return success (the sequence loop will handle turning)
+                    # NAV mode: first detection is the leading edge of the node.
+                    # Move forward briefly so the robot is centered before turn_to().
+                    send_ble_log("Node edge detected. Centering over node before turn...")
+                    drive(current_speed, current_speed, True, True)
+                    for _ in range(NAV_NODE_CENTER_MS // 10):
+                        check_pause()
+                        if should_abort():
+                            stop()
+                            return False
+                        s_mid = read_sensors()
+                        send_sensors_if_time(s_mid)
+                        time.sleep_ms(10)
                     stop()
                     send_ble_log(f"Node reached successfully! (diff: {diff}ms)")
                     return True
@@ -383,8 +470,10 @@ def run_navigation_sequence(start_node, end_node, path_type):
     send_ble_log(f"Calculating path Node {start_node} -> Node {end_node} via {path_type}...")
     if path_type == "DFS":
         path = dfs_path(start_node, end_node)
-    else:
+    elif path_type == "BFS":
         path = bfs_path(start_node, end_node)
+    else:
+        path = shortest_path(start_node, end_node)
         
     if not path:
         send_ble_log("Error: No path found!")
@@ -461,7 +550,7 @@ def handle_command(cmd):
         line_paused = False
         nav_triggered = False
         stop()
-        send_ble_log("Mode switched: BFS Nav (Standby)")
+        send_ble_log("Mode switched: Weighted Nav (Standby)")
     elif cmd == "M:PAUSE":
         line_paused = True
         stop()
@@ -478,7 +567,7 @@ def handle_command(cmd):
             nodes = parts[1].split(",")
             nav_start = int(nodes[0])
             nav_end = int(nodes[1])
-            nav_path_type = "BFS"
+            nav_path_type = "SHORTEST"
             if len(nodes) > 2:
                 nav_path_type = nodes[2].strip().upper()
             current_mode = "NAV"

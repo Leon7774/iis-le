@@ -25,7 +25,7 @@ class BleController extends ChangeNotifier {
   int navStart = 1;
   int navEnd = 4;
   List<int> passedNodes = [];
-  String navAlg = "BFS";
+  String navAlg = "SHORTEST";
   List<String> consoleLogs = [];
 
   StreamSubscription? _scanSubscription;
@@ -62,7 +62,7 @@ class BleController extends ChangeNotifier {
     if (isScanning || isConnecting || isConnected) return;
 
     logToConsole("Starting BLE scan...");
-    
+
     // Check adapter state
     if (await FlutterBluePlus.adapterState.first != BluetoothAdapterState.on) {
       logToConsole("Error: Bluetooth is turned off.");
@@ -71,19 +71,24 @@ class BleController extends ChangeNotifier {
 
     try {
       _scanSubscription?.cancel();
-      _scanSubscription = FlutterBluePlus.scanResults.listen((results) {
-        for (ScanResult r in results) {
-          final name = r.device.platformName.isNotEmpty ? r.device.platformName : r.device.advName;
-          if (name == "PicoMotor") {
-            logToConsole("Found PicoMotor! Connecting...");
-            FlutterBluePlus.stopScan();
-            connectToDevice(r.device);
-            break;
+      _scanSubscription = FlutterBluePlus.scanResults.listen(
+        (results) {
+          for (ScanResult r in results) {
+            final name = r.device.platformName.isNotEmpty
+                ? r.device.platformName
+                : r.device.advName;
+            if (name == "PicoMotor") {
+              logToConsole("Found PicoMotor! Connecting...");
+              FlutterBluePlus.stopScan();
+              connectToDevice(r.device);
+              break;
+            }
           }
-        }
-      }, onError: (e) {
-        logToConsole("Scan error: $e");
-      });
+        },
+        onError: (e) {
+          logToConsole("Scan error: $e");
+        },
+      );
 
       await FlutterBluePlus.startScan(timeout: const Duration(seconds: 15));
     } catch (e) {
@@ -108,7 +113,9 @@ class BleController extends ChangeNotifier {
         if (state == BluetoothConnectionState.connected) {
           isConnected = true;
           isConnecting = false;
-          logToConsole("Connected to ${device.platformName.isNotEmpty ? device.platformName : 'PicoMotor'}");
+          logToConsole(
+            "Connected to ${device.platformName.isNotEmpty ? device.platformName : 'PicoMotor'}",
+          );
           notifyListeners();
         } else if (state == BluetoothConnectionState.disconnected) {
           disconnect();
@@ -191,7 +198,6 @@ class BleController extends ChangeNotifier {
         logToConsole("Error: RX/TX characteristics not found.");
         disconnect();
       }
-
     } catch (e) {
       logToConsole("Connection failed: $e");
       disconnect();
@@ -231,7 +237,7 @@ class BleController extends ChangeNotifier {
   }
 
   Future<void> startBfsNav(int start, int end) async {
-    await startNav(start, end, "BFS");
+    await startNav(start, end, "SHORTEST");
   }
 
   Future<void> togglePause() async {
@@ -265,7 +271,7 @@ class BleController extends ChangeNotifier {
   Future<void> disconnect() async {
     _txSubscription?.cancel();
     _connectionSubscription?.cancel();
-    
+
     if (connectedDevice != null) {
       try {
         await connectedDevice!.disconnect();
