@@ -43,6 +43,7 @@ right_sensor  = ADC(Pin(28))
 ANALOG_THRESHOLD = 60000
 DIGITAL_BLACK    = 0
 NAV_NODE_CENTER_MS = 180
+TARGET_BRAKE_MS = 150
 
 # ============================================================
 # GRAPH DEFINITIONS
@@ -233,6 +234,20 @@ def drive(speed_a, speed_b, fwd_a=True, fwd_b=True):
 
 def stop():
     drive(0, 0)
+
+def brake(duration_ms=TARGET_BRAKE_MS):
+    in1.value(1)
+    in2.value(1)
+    in3.value(1)
+    in4.value(1)
+    ena.duty_u16(65535)
+    enb.duty_u16(65535)
+
+    for _ in range(duration_ms // 10):
+        if should_abort():
+            break
+        time.sleep_ms(10)
+    stop()
 
 # ============================================================
 # SENSOR READING & NODE DETECTION
@@ -521,7 +536,8 @@ def run_navigation_sequence(start_node, end_node, path_type):
             except Exception as e:
                 print("Failed to notify reached node:", e)
 
-    stop()
+    send_ble_log("Target node reached. Braking...")
+    brake()
     send_ble_log(f"SUCCESS: Arrived at Destination Node {end_node}!")
     return True
 
