@@ -46,14 +46,31 @@ DIGITAL_BLACK    = 0
 # GRAPH DEFINITIONS
 # ============================================================
 
-DIR_NAMES = ["N", "E", "S", "W"]
+DIR_NAMES = ["N", "NE", "E", "SE", "S", "SW", "W", "NW"]
 
 adj = [
-    [0, 0, 0, 0], # Node 0 (Dummy)
-    [0, 2, 0, 0], # Node 1: East to 2
-    [0, 0, 3, 1], # Node 2: South to 3, West to 1
-    [2, 0, 0, 4], # Node 3: North to 2, West to 4
-    [0, 3, 0, 0]  # Node 4: East to 3
+    [0, 0, 0, 0, 0, 0, 0, 0], # Node 0 (Dummy)
+    [0, 0, 2, 0, 7, 0, 0, 0], # Node 1
+    [0, 0, 0, 0, 4, 0, 1, 0], # Node 2 (Corrected West: 1)
+    [0, 0, 0, 6, 0, 5, 0, 0], # Node 3
+    [2, 0, 5, 0, 9, 0, 0, 0], # Node 4
+    [0, 3, 0, 10, 0, 0, 4, 0],# Node 5
+    [0, 0, 0, 0, 0, 10, 0, 3],# Node 6
+    [1, 0, 8, 0, 0, 0, 0, 0], # Node 7
+    [0, 0, 9, 0, 11, 0, 7, 0],# Node 8
+    [4, 0, 0, 0, 0, 0, 8, 0], # Node 9
+    [0, 6, 0, 0, 12, 0, 0, 5],# Node 10
+    [8, 0, 12, 0, 13, 0, 0, 0],# Node 11
+    [10, 0, 0, 0, 14, 0, 11, 0],# Node 12
+    [11, 0, 14, 0, 18, 0, 0, 0],# Node 13
+    [12, 0, 0, 0, 16, 0, 13, 0],# Node 14
+    [0, 0, 16, 0, 19, 0, 0, 0],# Node 15
+    [14, 0, 17, 0, 0, 0, 15, 0],# Node 16
+    [0, 0, 0, 0, 21, 0, 16, 0],# Node 17
+    [13, 0, 19, 0, 0, 0, 0, 0],# Node 18
+    [15, 0, 0, 0, 20, 0, 18, 0],# Node 19
+    [19, 0, 21, 0, 0, 0, 0, 0],# Node 20
+    [17, 0, 0, 0, 0, 0, 20, 0] # Node 21
 ]
 
 # ============================================================
@@ -68,6 +85,8 @@ last_sensor_send = 0      # Telemetry timer
 nav_start = 1             # Start node for pathfinder
 nav_end = 4               # Goal node for pathfinder
 nav_triggered = False     # Triggers path navigation sequence
+nav_path_type = "BFS"     # Routing algorithm: "BFS" or "DFS"
+last_node_time = 0        # Debounce timestamp for node detection
 
 # ============================================================
 # BFS PATHFINDING
@@ -95,6 +114,30 @@ def bfs_path(start, goal):
                     path.reverse()
                     return path
                 queue.append(neighbor)
+    return None
+
+def dfs_path(start, goal):
+    if start == goal:
+        return []
+
+    visited = set()
+    path = []
+
+    def dfs(curr):
+        visited.add(curr)
+        if curr == goal:
+            return True
+
+        for direction, neighbor in enumerate(adj[curr]):
+            if neighbor != 0 and neighbor not in visited:
+                path.append((curr, direction, neighbor))
+                if dfs(neighbor):
+                    return True
+                path.pop()
+        return False
+
+    if dfs(start):
+        return path
     return None
 
 # ============================================================
@@ -175,16 +218,18 @@ def turn_to(current_heading, target_dir):
         send_ble_log("Already aligned.")
         return target_dir
 
-    # Calculate shortest turn in 4-direction system
-    diff = (target_dir - current_heading) % 4
-    if diff == 3:
-        diff = -1
+    # Calculate shortest turn in 8-direction system
+    rotation_delta = (target_dir - current_heading + 8) % 8
+    if rotation_delta == 0:
+        return target_dir
 
-    send_ble_log(f"TURN: {DIR_NAMES[current_heading]} -> {DIR_NAMES[target_dir]}")
+    direction_coefficient = -1 if rotation_delta > 4 else 1
+
+    send_ble_log(f"TURN: {DIR_NAMES[current_heading]} -> {DIR_NAMES[target_dir]} (rot: {rotation_delta})")
 
     # Use turn speed relative to current speed setting
-    turn = min(100, current_speed + 10)
-    if diff > 0:
+    turn = min(100, current_speed + 15)
+    if direction_coefficient > 0:
         # RIGHT TURN
         drive(turn, turn, False, True)
     else:
@@ -218,6 +263,7 @@ def turn_to(current_heading, target_dir):
     return target_dir
 
 def travel_to_next_node():
+    global last_node_time
     last_line_time = time.ticks_ms()
     while not should_abort():
         check_pause()
@@ -228,59 +274,62 @@ def travel_to_next_node():
         send_sensors_if_time(s)
 
         if is_node(s):
-            if current_mode == "LINE":
-                send_ble_log("Node reached! Centering over node...")
-                
-                # Move forward slightly for 80ms to center wheels over the node
-                base = current_speed
-                drive(base, base, True, True)
-                for _ in range(8):
-                    check_pause()
-                    if should_abort():
-                        stop()
-                        return False
+            now = time.ticks_ms()
+            if time.ticks_diff(now, last_node_time) > 600:
+                last_node_time = now
+                if current_mode == "LINE":
+                    send_ble_log("Node reached! Centering over node...")
                     
-                    s_mid = read_sensors()
-                    send_sensors_if_time(s_mid)
-                    time.sleep_ms(10)
-                
-                send_ble_log("Turning right...")
-                # Start turning right
-                rotate_speed = min(100, current_speed + 15)
-                drive(rotate_speed, rotate_speed, False, True)
-                
-                # Move off the node square (300ms in 10ms intervals)
-                for _ in range(30):
-                    check_pause()
-                    if should_abort():
-                        stop()
-                        return False
+                    # Move forward slightly for 80ms to center wheels over the node
+                    base = current_speed
+                    drive(base, base, True, True)
+                    for _ in range(8):
+                        check_pause()
+                        if should_abort():
+                            stop()
+                            return False
+                        
+                        s_mid = read_sensors()
+                        send_sensors_if_time(s_mid)
+                        time.sleep_ms(10)
                     
-                    s_rot = read_sensors()
-                    send_sensors_if_time(s_rot)
-                    time.sleep_ms(10)
-                
-                # Find the new line
-                while not should_abort():
-                    check_pause()
-                    if should_abort():
-                        break
-                    s_new = read_sensors()
-                    send_sensors_if_time(s_new)
-                    m = s_new[2]
-                    if m:
-                        break
-                    time.sleep_ms(5)
+                    send_ble_log("Turning right...")
+                    # Start turning right
+                    rotate_speed = min(100, current_speed + 15)
+                    drive(rotate_speed, rotate_speed, False, True)
                     
-                stop()
-                send_ble_log("Found new line! Resuming follow...")
-                last_line_time = time.ticks_ms()
-                continue
-            else:
-                # NAV mode: Stop and return success (the sequence loop will handle turning)
-                stop()
-                send_ble_log("Node reached!")
-                return True
+                    # Move off the node square (300ms in 10ms intervals)
+                    for _ in range(30):
+                        check_pause()
+                        if should_abort():
+                            stop()
+                            return False
+                        
+                        s_rot = read_sensors()
+                        send_sensors_if_time(s_rot)
+                        time.sleep_ms(10)
+                    
+                    # Find the new line
+                    while not should_abort():
+                        check_pause()
+                        if should_abort():
+                            break
+                        s_new = read_sensors()
+                        send_sensors_if_time(s_new)
+                        m = s_new[2]
+                        if m:
+                            break
+                        time.sleep_ms(5)
+                        
+                    stop()
+                    send_ble_log("Found new line! Resuming follow...")
+                    last_line_time = time.ticks_ms()
+                    continue
+                else:
+                    # NAV mode: Stop and return success (the sequence loop will handle turning)
+                    stop()
+                    send_ble_log("Node reached!")
+                    return True
 
         left_black = s[1]
         middle_black = s[2]
@@ -313,15 +362,19 @@ def travel_to_next_node():
         time.sleep_ms(10)
     return False
 
-def run_navigation_sequence(start_node, end_node):
-    send_ble_log(f"Calculating path Node {start_node} -> Node {end_node}...")
-    path = bfs_path(start_node, end_node)
+def run_navigation_sequence(start_node, end_node, path_type):
+    send_ble_log(f"Calculating path Node {start_node} -> Node {end_node} via {path_type}...")
+    if path_type == "DFS":
+        path = dfs_path(start_node, end_node)
+    else:
+        path = bfs_path(start_node, end_node)
+        
     if not path:
         send_ble_log("Error: No path found!")
         return False
 
     send_ble_log(f"Path found: {path}")
-    curr_h = 1 # Facing East initially (towards Node 2)
+    curr_h = 2 # Facing East initially (towards Node 2 in 8-direction system)
 
     for step in path:
         if should_abort():
@@ -338,6 +391,14 @@ def run_navigation_sequence(start_node, end_node):
             return False
         
         curr_h = direction
+        
+        # Notify the app that we reached the node
+        global conn_handle
+        if conn_handle is not None:
+            try:
+                ble.gatts_notify(conn_handle, tx_handle, f"REACHED:{to_n}\n".encode())
+            except Exception as e:
+                print("Failed to notify reached node:", e)
 
     stop()
     send_ble_log(f"SUCCESS: Arrived at Destination Node {end_node}!")
@@ -348,7 +409,7 @@ def run_navigation_sequence(start_node, end_node):
 # ============================================================
 
 def handle_command(cmd):
-    global current_speed, current_mode, line_paused, nav_start, nav_end, nav_triggered
+    global current_speed, current_mode, line_paused, nav_start, nav_end, nav_triggered, nav_path_type
     cmd = cmd.strip().upper()
     print("CMD:", cmd)
 
@@ -379,10 +440,13 @@ def handle_command(cmd):
             nodes = parts[1].split(",")
             nav_start = int(nodes[0])
             nav_end = int(nodes[1])
+            nav_path_type = "BFS"
+            if len(nodes) > 2:
+                nav_path_type = nodes[2].strip().upper()
             current_mode = "NAV"
             line_paused = False
             nav_triggered = True
-            send_ble_log(f"BFS Nav Triggered: {nav_start} -> {nav_end}")
+            send_ble_log(f"Nav Triggered ({nav_path_type}): {nav_start} -> {nav_end}")
         except Exception as e:
             print("Error parsing NAV command:", e)
     elif current_mode == "RC":
@@ -521,7 +585,7 @@ try:
             if last_mode != "NAV":
                 last_mode = "NAV"
             if nav_triggered:
-                run_navigation_sequence(nav_start, nav_end)
+                run_navigation_sequence(nav_start, nav_end, nav_path_type)
                 nav_triggered = False
                 current_mode = "RC"
                 last_mode = "RC"

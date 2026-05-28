@@ -23,6 +23,8 @@ class BleController extends ChangeNotifier {
   bool isLinePaused = false;
   int navStart = 1;
   int navEnd = 4;
+  List<int> passedNodes = [];
+  String navAlg = "BFS";
   List<String> consoleLogs = [];
 
   StreamSubscription? _scanSubscription;
@@ -168,6 +170,15 @@ class BleController extends ChangeNotifier {
             } else if (reply.startsWith("PAUSE:")) {
               isLinePaused = reply.replaceAll("PAUSE:", "").trim() == "1";
               notifyListeners();
+            } else if (reply.startsWith("REACHED:")) {
+              final nodeStr = reply.replaceAll("REACHED:", "").trim();
+              final node = int.tryParse(nodeStr);
+              if (node != null) {
+                if (!passedNodes.contains(node)) {
+                  passedNodes.add(node);
+                  notifyListeners();
+                }
+              }
             }
           }
         });
@@ -198,14 +209,20 @@ class BleController extends ChangeNotifier {
     }
   }
 
-  Future<void> startBfsNav(int start, int end) async {
+  Future<void> startNav(int start, int end, String alg) async {
     if (!isConnected) return;
     navStart = start;
     navEnd = end;
+    navAlg = alg;
     activeMode = "NAV";
     isLinePaused = false;
+    passedNodes = [start];
     notifyListeners();
-    await sendCommand("NAV:$start,$end");
+    await sendCommand("NAV:$start,$end,$alg");
+  }
+
+  Future<void> startBfsNav(int start, int end) async {
+    await startNav(start, end, "BFS");
   }
 
   Future<void> togglePause() async {
@@ -213,7 +230,7 @@ class BleController extends ChangeNotifier {
     logToConsole("App -> Pico: Toggling line pause state...");
     if (isLinePaused) {
       if (activeMode == "NAV") {
-        await sendCommand("NAV:$navStart,$navEnd"); // resume NAV
+        await sendCommand("NAV:$navStart,$navEnd,$navAlg"); // resume NAV
       } else {
         await sendCommand("M:LINE"); // resume LINE
       }
@@ -255,6 +272,7 @@ class BleController extends ChangeNotifier {
     isConnecting = false;
     activeMode = "RC";
     isLinePaused = false;
+    passedNodes = [];
     notifyListeners();
   }
 
